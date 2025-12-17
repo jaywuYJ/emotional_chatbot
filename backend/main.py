@@ -495,6 +495,8 @@ async def get_session_history(session_id: str, limit: int = 20):
                 "session_id": session_id,
                 "messages": [
                     {
+                        "id": msg.id,
+                        "user_id": msg.user_id,
                         "role": msg.role,
                         "content": msg.content,
                         "emotion": msg.emotion,
@@ -563,6 +565,8 @@ async def delete_session(session_id: str):
     except Exception as e:
         logger.error(f"删除会话错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.get("/users/{user_id}/emotion-trends")
 async def get_user_emotion_trends(user_id: str):

@@ -3,9 +3,9 @@
 聊天相关路由
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from typing import List, Optional
-from backend.models import ChatRequest, ChatResponse
+from backend.models import ChatRequest, ChatResponse, MessageUpdateRequest
 from backend.services.chat_service import ChatService
 from backend.logging_config import get_logger
 import json
@@ -190,7 +190,9 @@ async def search_user_sessions(user_id: str, keyword: str = "", limit: int = 50)
 
 @router.post("/sessions/batch-delete")
 async def delete_sessions_batch(session_ids: List[str]):
-    """批量删除会话"""
+    """
+    批量删除会话
+    """
     try:
         if not session_ids:
             raise HTTPException(status_code=400, detail="会话ID列表不能为空")
@@ -201,6 +203,87 @@ async def delete_sessions_batch(session_ids: List[str]):
         raise
     except Exception as e:
         logger.error(f"批量删除会话错误: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/messages/{message_id}")
+async def update_message(message_id: str, request: MessageUpdateRequest):
+    """
+    修改消息内容（消息编辑功能）
+    """
+    try:
+        # 输入验证
+        if not request.new_content or not request.new_content.strip():
+            raise HTTPException(status_code=400, detail="消息内容不能为空")
+        
+        if len(request.new_content.strip()) > 2000:
+            raise HTTPException(status_code=400, detail="消息内容过长，最多2000字符")
+        
+        from backend.database import DatabaseManager
+        
+        with DatabaseManager() as db:
+            # 尝试将message_id转换为整数，如果失败则保持字符串
+            try:
+                message_id_int = int(message_id)
+            except ValueError:
+                message_id_int = message_id
+                
+            updated_message = db.update_message(
+                message_id=message_id_int,
+                user_id=request.user_id,
+                new_content=request.new_content.strip(),
+                emotion=request.emotion,
+                emotion_intensity=request.emotion_intensity
+            )
+            
+            if not updated_message:
+                raise HTTPException(status_code=404, detail="消息不存在或无权修改")
+            
+            return {
+                "message": "消息修改成功",
+                "message_id": updated_message.id,
+                "content": updated_message.content,
+                "updated_at": updated_message.created_at.isoformat() if updated_message.created_at else None
+            }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"修改消息错误: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from fastapi import Query
+
+@router.delete("/messages/{message_id}")
+async def delete_message(message_id: str, user_id: str = Query(...)):
+    """
+    删除（撤回）消息
+    """
+    try:
+        from backend.database import DatabaseManager
+        
+        with DatabaseManager() as db:
+            # 尝试将message_id转换为整数，如果失败则保持字符串
+            try:
+                message_id_int = int(message_id)
+            except ValueError:
+                message_id_int = message_id
+                
+            success = db.delete_message(message_id=message_id_int, user_id=user_id)
+            
+            if not success:
+                raise HTTPException(status_code=404, detail="消息不存在或无权删除")
+            
+            return {
+                "message": "消息撤回成功",
+                "message_id": message_id
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除消息错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

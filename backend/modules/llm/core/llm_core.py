@@ -391,6 +391,7 @@ class SimpleEmotionalChatEngine:
         
         # 保存用户消息到数据库
         user_message = None
+        user_message_id = 0
         try:
             db_manager = DatabaseManager()
             with db_manager as db:
@@ -409,11 +410,14 @@ class SimpleEmotionalChatEngine:
                     emotion_intensity=emotion_data["intensity"]
                 )
                 
+                # 在会话关闭前获取ID
+                user_message_id = user_message.id
+                
                 # 保存情感分析结果
                 db.save_emotion_analysis(
                     session_id=session_id,
                     user_id=user_id,
-                    message_id=user_message.id,
+                    message_id=user_message_id,
                     emotion=emotion_data["emotion"],
                     intensity=emotion_data["intensity"],
                     keywords=emotion_data["keywords"],
@@ -454,7 +458,8 @@ class SimpleEmotionalChatEngine:
             response=response_text,
             session_id=session_id,
             emotion=emotion_data["emotion"],
-            suggestions=emotion_data["suggestions"][:3]
+            suggestions=emotion_data["suggestions"][:3],
+            message_id=user_message_id
         )
     
     def get_session_summary(self, session_id):

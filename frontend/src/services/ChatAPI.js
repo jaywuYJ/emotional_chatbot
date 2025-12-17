@@ -167,6 +167,37 @@ class ChatAPI {
     }
   }
 
+  // 消息修改功能
+  static async updateMessage(messageId, data) {
+    try {
+      const response = await axios.put(`${API_BASE_URL}/chat/messages/${messageId}`, data, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('修改消息失败:', error);
+      throw error;
+    }
+  }
+
+  // 消息撤回功能
+  static async deleteMessage(messageId, userId) {
+    try {
+      const response = await axios.delete(`${API_BASE_URL}/chat/messages/${messageId}`, {
+        params: { userId },
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('撤回消息失败:', error);
+      throw error;
+    }
+  }
+
   static async healthCheck() {
     try {
       const response = await axios.get(`${API_BASE_URL}/health`);
@@ -225,6 +256,8 @@ class ChatAPI {
       throw error;
     }
   }
+
+
 }
 
 export default ChatAPI;

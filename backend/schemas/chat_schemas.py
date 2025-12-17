@@ -107,6 +107,7 @@ class ChatResponse(BaseResponse):
     emotion: EmotionType = Field(..., description="检测到的用户情绪")
     emotion_intensity: float = Field(..., ge=0, le=10, description="情绪强度")
     session_id: str = Field(..., description="会话ID")
+    message_id: str = Field(..., description="用户消息ID")
     timestamp: datetime = Field(default_factory=datetime.now, description="响应时间")
     context: Optional[Dict[str, Any]] = Field(None, description="上下文信息")
     
@@ -122,6 +123,7 @@ class ChatResponse(BaseResponse):
                 "emotion": "焦虑",
                 "emotion_intensity": 7.5,
                 "session_id": "session456",
+                "message_id": "msg123",
                 "timestamp": "2025-10-16T14:30:00Z",
                 "status_code": 200,
                 "context": {

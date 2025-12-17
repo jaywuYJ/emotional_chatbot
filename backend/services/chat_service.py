@@ -179,7 +179,8 @@ class ChatService:
                             "blocked": True,
                             "reason": preprocessed["warnings"],
                             "input_validation": "failed"
-                        }
+                        },
+                        message_id=0
                     )
                 
                 # 使用清洗后的文本
@@ -252,11 +253,29 @@ class ChatService:
         # 5. 生成回复
         if rag_result and rag_result.get("use_rag"):
             # 使用RAG增强的回复
+            # 保存用户消息到数据库以获取message_id
+            user_message = None
+            try:
+                with DatabaseManager() as db:
+                    user_message = db.save_message(
+                        session_id=session_id,
+                        user_id=user_id,
+                        role="user",
+                        content=message,
+                        emotion=emotion,
+                        emotion_intensity=emotion_intensity
+                    )
+            except Exception as e:
+                print(f"ChatService保存用户消息失败: {e}")
+                import traceback
+                traceback.print_exc()
+            
             response = ChatResponse(
                 response=rag_result["answer"],
                 emotion=emotion,
                 emotion_intensity=emotion_intensity,
                 session_id=session_id,
+                message_id=user_message.id if user_message else 0,
                 timestamp=datetime.now()
             )
             # 添加RAG来源信息和预处理信息
@@ -286,7 +305,8 @@ class ChatService:
                     response="抱歉，我遇到了一些技术问题，请稍后再试。",
                     session_id=session_id,
                     emotion="neutral",
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
+                    message_id=0
                 )
             response.context = {
                 "memories_count": len(context.get("memories", {}).get("all", [])),
@@ -310,16 +330,8 @@ class ChatService:
                         db.create_session(session_id, user_id)
                         print(f"ChatService会话创建完成")
                     
-                    # RAG分支需要保存用户消息和AI回复
-                    print(f"ChatService RAG分支：保存用户消息和AI回复")
-                    db.save_message(
-                        session_id=session_id,
-                        user_id=user_id,
-                        role="user",
-                        content=message,
-                        emotion=emotion,
-                        emotion_intensity=emotion_intensity
-                    )
+                    # RAG分支需要保存AI回复
+                    print(f"ChatService RAG分支：保存AI回复")
                     db.save_message(
                         session_id=session_id,
                         user_id=user_id,
@@ -439,6 +451,7 @@ class ChatService:
                     "messages": [
                         {
                             "id": msg.id,
+                            "user_id": msg.user_id,  # 添加user_id字段
                             "role": msg.role,
                             "content": msg.content,
                             "emotion": msg.emotion,

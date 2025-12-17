@@ -26,6 +26,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
+    message_id: int  # ID of the newly created message
     emotion: Optional[str] = None
     emotion_intensity: Optional[float] = None
     suggestions: Optional[List[str]] = None
@@ -223,6 +224,13 @@ class PersonalizationResponse(BaseModel):
     config_version: int
     created_at: datetime
     updated_at: datetime
+
+class MessageUpdateRequest(BaseModel):
+    """消息修改请求模型"""
+    user_id: str
+    new_content: str
+    emotion: Optional[str] = None
+    emotion_intensity: Optional[float] = None
 
 class RoleTemplate(BaseModel):
     """角色模板"""

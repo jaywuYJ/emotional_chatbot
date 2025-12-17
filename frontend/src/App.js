@@ -148,7 +148,23 @@ function App() {
     const value = e.target.value;
     setInputValue(value);
     debouncedDetectURLs(value);
-  }, [debouncedDetectURLs]);
+  }, [debouncedDetectURLs, setInputValue]);
+
+  // 消息更新处理
+  const handleMessageUpdate = useCallback((updatedMessage) => {
+    setMessages(prevMessages => 
+      prevMessages.map(msg => 
+        msg.id === updatedMessage.id 
+          ? { ...msg, content: updatedMessage.content } 
+          : msg
+      )
+    );
+  }, [setMessages]);
+
+  // 消息删除处理
+  const handleMessageDelete = useCallback((messageId) => {
+    setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
+  }, [setMessages]);
 
   // 快捷建议点击
   const handleSuggestionClick = useCallback((suggestion) => {
@@ -203,6 +219,8 @@ function App() {
         onOpenFeedbackModal={openFeedbackModal}
         deepThinkActive={deepThinkActive}
         onDeepThinkChange={setDeepThinkActive}
+        onMessageUpdate={handleMessageUpdate}
+        onMessageDelete={handleMessageDelete}
       />
 
       <PersonalizationPanel

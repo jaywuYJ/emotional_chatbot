@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import ChatAPI from '../services/ChatAPI';
+
 import { AnimatePresence } from 'framer-motion';
 import { User, Bot, Loader2, Paperclip, Send, Link, ExternalLink, X, Sparkles, Mic, PenLine, Image, Music, Languages, Presentation, MoreHorizontal } from 'lucide-react';
 import {
@@ -77,8 +79,13 @@ const ChatContainer = ({
   onSuggestionClick,
   onOpenFeedbackModal,
   deepThinkActive,
-  onDeepThinkChange
+  onDeepThinkChange,
+  onMessageUpdate,
+  onMessageDelete
 }) => {
+
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editContent, setEditContent] = useState('');
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -87,6 +94,108 @@ const ChatContainer = ({
     }
     if (onTabNavigation) {
       onTabNavigation(e);
+    }
+  };
+
+  // 开始编辑消息
+  const handleEditStart = (message) => {
+    setEditingMessageId(message.id);
+    setEditContent(message.content);
+  };
+
+  // 取消编辑
+  const handleEditCancel = () => {
+    setEditingMessageId(null);
+    setEditContent('');
+  };
+
+  // 保存编辑
+  const handleEditSave = async (messageId) => {
+    const trimmedContent = editContent.trim();
+    
+    // 输入验证
+    if (!trimmedContent) {
+      alert('消息内容不能为空');
+      return;
+    }
+    
+    if (trimmedContent.length > 2000) {
+      alert('消息内容过长，最多2000字符');
+      return;
+    }
+    
+    try {
+      const message = messages.find(m => m.id === messageId);
+      if (!message) {
+        alert('消息不存在');
+        return;
+      }
+      
+      // 使用数据库ID而不是前端生成的ID
+      const dbId = message.dbId || message.id;
+      
+      const result = await ChatAPI.updateMessage(dbId, {
+        user_id: message.user_id || 'anonymous',
+        new_content: trimmedContent
+      });
+      
+      if (onMessageUpdate) {
+        onMessageUpdate({
+          id: messageId,
+          content: trimmedContent
+        });
+      }
+      
+      setEditingMessageId(null);
+      setEditContent('');
+    } catch (error) {
+      console.error('编辑消息失败:', error);
+      
+      // 更友好的错误提示
+      let errorMessage = '编辑消息失败，请重试';
+      if (error.response?.status === 400) {
+        errorMessage = error.response.data.detail || '输入内容无效';
+      } else if (error.response?.status === 404) {
+        errorMessage = '消息不存在或无权修改';
+      } else if (error.response?.status === 500) {
+        errorMessage = '服务器错误，请稍后重试';
+      }
+      
+      alert(errorMessage);
+    }
+  };
+
+  // 撤回消息
+  const handleDeleteMessage = async (messageId) => {
+    if (!window.confirm('确定要撤回这条消息吗？撤回后无法恢复。')) return;
+    
+    try {
+      const message = messages.find(m => m.id === messageId);
+      if (!message) {
+        alert('消息不存在');
+        return;
+      }
+      
+      // 使用数据库ID而不是前端生成的ID
+      const dbId = message.dbId || message.id;
+      
+      const result = await ChatAPI.deleteMessage(dbId, message.user_id || 'anonymous');
+      
+      if (onMessageDelete) {
+        onMessageDelete(messageId);
+      }
+    } catch (error) {
+      console.error('撤回消息失败:', error);
+      
+      // 更友好的错误提示
+      let errorMessage = '撤回消息失败，请重试';
+      if (error.response?.status === 404) {
+        errorMessage = '消息不存在或无权撤回';
+      } else if (error.response?.status === 500) {
+        errorMessage = '服务器错误，请稍后重试';
+      }
+      
+      alert(errorMessage);
     }
   };
 
@@ -126,40 +235,136 @@ const ChatContainer = ({
                   {message.role === 'user' ? <User size={18} /> : <Bot size={18} />}
                 </Avatar>
                 <MessageWrapper>
-                  <MessageContent 
-                    isUser={message.role === 'user'}
-                    emotion={message.emotion}
-                  >
-                    {message.role === 'assistant' && !message.isHistory ? (
-                      <TypewriterComponent
-                        text={message.content}
-                        speed={30}
-                        showCursor={true}
-                        cursorColor="#6366f1"
-                        isUser={false}
+                  {editingMessageId === message.id ? (
+                    <div style={{ width: '100%' }}>
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '8px',
+                          minHeight: '60px',
+                          resize: 'vertical',
+                          fontSize: '14px',
+                          fontFamily: 'inherit'
+                        }}
+                        autoFocus
                       />
-                    ) : (
-                      message.content
-                    )}
-                    {message.emotion && message.emotion !== 'neutral' && (
-                      <EmotionTag emotion={message.emotion}>
-                        {emotionLabels[message.emotion] || message.emotion}
-                      </EmotionTag>
-                    )}
-                  </MessageContent>
-                  <MessageTimestamp isUser={message.role === 'user'}>
-                    {formatTimestamp(message.timestamp)}
-                  </MessageTimestamp>
-                  {message.role === 'assistant' && (
-                    <FeedbackButtons>
-                      <FeedbackButton
-                        onClick={() => onOpenFeedbackModal(message)}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
+                      <div style={{ 
+                        display: 'flex', 
+                        gap: '8px', 
+                        marginTop: '8px', 
+                        justifyContent: 'flex-end'
+                      }}>
+                        <button
+                          onClick={handleEditCancel}
+                          style={{
+                            padding: '4px 12px',
+                            borderRadius: '4px',
+                            border: '1px solid #e5e7eb',
+                            background: 'white',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={() => handleEditSave(message.id)}
+                          style={{
+                            padding: '4px 12px',
+                            borderRadius: '4px',
+                            border: '1px solid #6366f1',
+                            background: '#6366f1',
+                            color: 'white',
+                            cursor: 'pointer',
+                            fontSize: '12px'
+                          }}
+                        >
+                          保存
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <MessageContent 
+                        isUser={message.role === 'user'}
+                        emotion={message.emotion}
                       >
-                        反馈
-                      </FeedbackButton>
-                    </FeedbackButtons>
+                        {message.role === 'assistant' && !message.isHistory ? (
+                          <TypewriterComponent
+                            text={message.content}
+                            speed={30}
+                            showCursor={true}
+                            cursorColor="#6366f1"
+                            isUser={false}
+                          />
+                        ) : (
+                          message.content
+                        )}
+                        {message.emotion && message.emotion !== 'neutral' && (
+                          <EmotionTag emotion={message.emotion}>
+                            {emotionLabels[message.emotion] || message.emotion}
+                          </EmotionTag>
+                        )}
+                      </MessageContent>
+                      <MessageTimestamp isUser={message.role === 'user'}>
+                        {formatTimestamp(message.timestamp)}
+                      </MessageTimestamp>
+                      {message.role === 'assistant' && (
+                        <FeedbackButtons>
+                          <FeedbackButton
+                            onClick={() => onOpenFeedbackModal(message)}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                          >
+                            反馈
+                          </FeedbackButton>
+                        </FeedbackButtons>
+                      )}
+                      {message.role === 'user' && (
+                        <div style={{ 
+                          display: 'flex', 
+                          gap: '8px', 
+                          marginTop: '4px' 
+                        }}>
+                          <button
+                            onClick={() => handleEditStart(message)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#9ca3af',
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}
+                          >
+                            <PenLine size={12} />
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMessage(message.id)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#9ca3af',
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '2px'
+                            }}
+                          >
+                            <X size={12} />
+                            撤回
+                          </button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </MessageWrapper>
               </MessageBubble>

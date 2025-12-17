@@ -71,6 +71,7 @@ export const useSession = (currentUserId) => {
             emotion: msg.emotion,
             timestamp: new Date(msg.timestamp),
             dbId: dbId,
+            user_id: msg.user_id,  // 添加user_id字段
             isHistory: true
           };
           

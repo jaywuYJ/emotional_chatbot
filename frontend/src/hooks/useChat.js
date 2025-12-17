@@ -42,6 +42,7 @@ export const useChat = (currentUserId) => {
       id: Date.now(),
       role: 'user',
       content: userMessage,
+      user_id: currentUserId,  // 添加user_id字段
       attachments: attachments.map(att => ({
         id: att.id,
         name: att.name,
@@ -75,6 +76,18 @@ export const useChat = (currentUserId) => {
 
       setSessionId(response.session_id);
       setSuggestions(response.suggestions || []);
+
+      // 更新用户消息的ID为后端返回的真实ID，同时保存数据库ID
+      setMessages(prev => prev.map(msg => 
+        msg.id === newUserMessage.id 
+          ? { 
+              ...msg, 
+              id: response.message_id,
+              dbId: response.message_id,  // 保存数据库ID用于编辑和撤回
+              user_id: currentUserId      // 确保user_id存在
+            } 
+          : msg
+      ));
 
       // 添加机器人回复
       const botMessage = {

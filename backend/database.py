@@ -381,6 +381,69 @@ class DatabaseManager:
             .limit(limit)\
             .all()
     
+    def get_message(self, message_id, user_id=None):
+        """获取特定消息"""
+        # 尝试将message_id转换为整数，如果失败则直接返回None
+        try:
+            message_id_int = int(message_id)
+        except ValueError:
+            return None
+            
+        query = self.db.query(ChatMessage).filter(ChatMessage.id == message_id_int)
+        if user_id:
+            query = query.filter(ChatMessage.user_id == user_id)
+        return query.first()
+    
+    def update_message(self, message_id, user_id, new_content, emotion=None, emotion_intensity=None):
+        """更新消息内容"""
+        message = self.get_message(message_id, user_id)
+        if not message:
+            return None
+        
+        # 验证内容不为空
+        if not new_content or not new_content.strip():
+            raise ValueError("消息内容不能为空")
+        
+        message.content = new_content.strip()
+        if emotion is not None:
+            message.emotion = emotion
+        if emotion_intensity is not None:
+            message.emotion_intensity = emotion_intensity
+        
+        # 更新修改时间（如果有该字段）
+        from datetime import datetime
+        if hasattr(message, 'updated_at'):
+            message.updated_at = datetime.utcnow()
+        
+        self.db.commit()
+        self.db.refresh(message)
+        return message
+    
+    def delete_message(self, message_id, user_id):
+        """删除（撤回）消息"""
+        message = self.get_message(message_id, user_id)
+        if not message:
+            return False
+        
+        try:
+            # 删除相关的情感分析记录
+            self.db.query(EmotionAnalysis).filter(EmotionAnalysis.message_id == message_id).delete()
+            
+            # 删除相关的反馈记录
+            self.db.query(UserFeedback).filter(UserFeedback.message_id == message_id).delete()
+            
+            # 删除相关的评估记录
+            self.db.query(ResponseEvaluation).filter(ResponseEvaluation.message_id == message_id).delete()
+            
+            # 删除消息本身
+            self.db.delete(message)
+            self.db.commit()
+            return True
+        except Exception as e:
+            self.db.rollback()
+            print(f"删除消息失败: {e}")
+            return False
+    
     def create_session(self, session_id, user_id):
         """创建新会话"""
         session = ChatSession(

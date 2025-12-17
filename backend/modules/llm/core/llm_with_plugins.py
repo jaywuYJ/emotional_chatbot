@@ -132,6 +132,8 @@ class EmotionalChatEngineWithPlugins:
         emotion_data = self._analyze_emotion_simple(request.message)
         
         # 保存用户消息
+        user_message = None
+        user_message_id = 0
         try:
             db_manager = DatabaseManager()
             with db_manager as db:
@@ -147,10 +149,13 @@ class EmotionalChatEngineWithPlugins:
                     emotion_intensity=emotion_data["intensity"]
                 )
                 
+                # 在会话关闭前获取ID
+                user_message_id = user_message.id
+                
                 db.save_emotion_analysis(
                     session_id=session_id,
                     user_id=user_id,
-                    message_id=user_message.id,
+                    message_id=user_message_id,
                     emotion=emotion_data["emotion"],
                     intensity=emotion_data["intensity"],
                     keywords=emotion_data.get("keywords", []),
@@ -209,6 +214,7 @@ class EmotionalChatEngineWithPlugins:
         return ChatResponse(
             response=response_text,
             session_id=session_id,
+            message_id=user_message_id,
             emotion=emotion_data["emotion"],
             suggestions=emotion_data.get("suggestions", [])[:3],
             plugin_used=plugin_used,

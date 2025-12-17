@@ -46,6 +46,22 @@ import { formatTimestamp, formatFileSize } from '../utils/formatters';
 import TypewriterComponent from './TypewriterText';
 import { getFileIcon } from '../utils/fileUtils';
 
+// 添加旋转动画的CSS
+const spinKeyframes = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+
+// 将CSS注入到页面中
+if (typeof document !== 'undefined' && !document.getElementById('edit-spinner-styles')) {
+  const style = document.createElement('style');
+  style.id = 'edit-spinner-styles';
+  style.textContent = spinKeyframes;
+  document.head.appendChild(style);
+}
+
 // 获取问候语
 const getGreeting = () => {
   const hour = new Date().getHours();
@@ -86,6 +102,8 @@ const ChatContainer = ({
 
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editContent, setEditContent] = useState('');
+  const [isEditingSaving, setIsEditingSaving] = useState(false);
+  const [isDeletingMessage, setIsDeletingMessage] = useState(null); // 存储正在删除的消息ID
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -107,10 +125,16 @@ const ChatContainer = ({
   const handleEditCancel = () => {
     setEditingMessageId(null);
     setEditContent('');
+    setIsEditingSaving(false); // 重置加载状态
   };
 
   // 保存编辑
   const handleEditSave = async (messageId) => {
+    // 防止重复提交
+    if (isEditingSaving) {
+      return;
+    }
+    
     const trimmedContent = editContent.trim();
     
     // 输入验证
@@ -123,6 +147,9 @@ const ChatContainer = ({
       alert('消息内容过长，最多2000字符');
       return;
     }
+    
+    // 设置加载状态
+    setIsEditingSaving(true);
     
     try {
       const message = messages.find(m => m.id === messageId);
@@ -187,10 +214,11 @@ const ChatContainer = ({
         }
       }
       
+      // 成功后重置编辑状态
       setEditingMessageId(null);
       setEditContent('');
       
-      // 如果有新回复，显示成功提示
+      // 如果有新回复，显示成功提示（使用更温和的提示方式）
       if (result.new_response) {
         console.log('消息已编辑并重新生成了回复');
         // 强制滚动到底部以显示新消息
@@ -199,10 +227,11 @@ const ChatContainer = ({
             messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
           }
         }, 100);
-        alert('消息已编辑并重新生成了回复！页面将自动滚动到最新消息。');
+        
+        // 使用更温和的提示方式，避免弹框
+        console.log('✅ 消息编辑成功，已重新生成回复');
       } else {
-        console.log('消息内容已更新');
-        alert('消息内容已更新！');
+        console.log('✅ 消息内容已更新');
       }
       
     } catch (error) {
@@ -218,13 +247,32 @@ const ChatContainer = ({
         errorMessage = '服务器错误，请稍后重试';
       }
       
-      alert(errorMessage);
+      console.error('❌ 编辑失败:', errorMessage);
+      
+      // 只在严重错误时才弹框，其他情况使用控制台提示
+      if (error.response?.status === 404 || error.response?.status === 403) {
+        alert(errorMessage);
+      } else {
+        // 可以在这里添加更温和的错误提示，比如toast通知
+        console.log('💡 提示: 可以查看控制台了解详细错误信息');
+      }
+    } finally {
+      // 无论成功还是失败，都重置加载状态
+      setIsEditingSaving(false);
     }
   };
 
   // 撤回消息
   const handleDeleteMessage = async (messageId) => {
+    // 防止重复删除
+    if (isDeletingMessage === messageId) {
+      return;
+    }
+    
     if (!window.confirm('确定要撤回这条消息吗？撤回后无法恢复。')) return;
+    
+    // 设置删除状态
+    setIsDeletingMessage(messageId);
     
     try {
       const message = messages.find(m => m.id === messageId);
@@ -253,6 +301,9 @@ const ChatContainer = ({
       }
       
       alert(errorMessage);
+    } finally {
+      // 重置删除状态
+      setIsDeletingMessage(null);
     }
   };
 
@@ -297,6 +348,7 @@ const ChatContainer = ({
                       <textarea
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
+                        disabled={isEditingSaving}
                         style={{
                           width: '100%',
                           padding: '8px 12px',
@@ -305,7 +357,9 @@ const ChatContainer = ({
                           minHeight: '60px',
                           resize: 'vertical',
                           fontSize: '14px',
-                          fontFamily: 'inherit'
+                          fontFamily: 'inherit',
+                          opacity: isEditingSaving ? 0.6 : 1,
+                          cursor: isEditingSaving ? 'not-allowed' : 'text'
                         }}
                         autoFocus
                       />
@@ -317,30 +371,51 @@ const ChatContainer = ({
                       }}>
                         <button
                           onClick={handleEditCancel}
+                          disabled={isEditingSaving}
                           style={{
                             padding: '4px 12px',
                             borderRadius: '4px',
                             border: '1px solid #e5e7eb',
-                            background: 'white',
-                            cursor: 'pointer',
-                            fontSize: '12px'
+                            background: isEditingSaving ? '#f3f4f6' : 'white',
+                            cursor: isEditingSaving ? 'not-allowed' : 'pointer',
+                            fontSize: '12px',
+                            opacity: isEditingSaving ? 0.6 : 1
                           }}
                         >
                           取消
                         </button>
                         <button
                           onClick={() => handleEditSave(message.id)}
+                          disabled={isEditingSaving}
                           style={{
                             padding: '4px 12px',
                             borderRadius: '4px',
                             border: '1px solid #6366f1',
-                            background: '#6366f1',
+                            background: isEditingSaving ? '#9ca3af' : '#6366f1',
                             color: 'white',
-                            cursor: 'pointer',
-                            fontSize: '12px'
+                            cursor: isEditingSaving ? 'not-allowed' : 'pointer',
+                            fontSize: '12px',
+                            opacity: isEditingSaving ? 0.8 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
                           }}
                         >
-                          保存
+                          {isEditingSaving ? (
+                            <>
+                              <div style={{
+                                width: '12px',
+                                height: '12px',
+                                border: '2px solid #ffffff',
+                                borderTop: '2px solid transparent',
+                                borderRadius: '50%',
+                                animation: 'spin 1s linear infinite'
+                              }} />
+                              保存中...
+                            </>
+                          ) : (
+                            '保存'
+                          )}
                         </button>
                       </div>
                     </div>
@@ -389,15 +464,17 @@ const ChatContainer = ({
                         }}>
                           <button
                             onClick={() => handleEditStart(message)}
+                            disabled={isEditingSaving || isDeletingMessage === message.id}
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: '#9ca3af',
+                              color: (isEditingSaving || isDeletingMessage === message.id) ? '#d1d5db' : '#9ca3af',
                               fontSize: '12px',
-                              cursor: 'pointer',
+                              cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '2px'
+                              gap: '2px',
+                              opacity: (isEditingSaving || isDeletingMessage === message.id) ? 0.5 : 1
                             }}
                           >
                             <PenLine size={12} />
@@ -405,19 +482,37 @@ const ChatContainer = ({
                           </button>
                           <button
                             onClick={() => handleDeleteMessage(message.id)}
+                            disabled={isEditingSaving || isDeletingMessage === message.id}
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: '#9ca3af',
+                              color: isDeletingMessage === message.id ? '#ef4444' : (isEditingSaving ? '#d1d5db' : '#9ca3af'),
                               fontSize: '12px',
-                              cursor: 'pointer',
+                              cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '2px'
+                              gap: '2px',
+                              opacity: isEditingSaving ? 0.5 : 1
                             }}
                           >
-                            <X size={12} />
-                            撤回
+                            {isDeletingMessage === message.id ? (
+                              <>
+                                <div style={{
+                                  width: '12px',
+                                  height: '12px',
+                                  border: '2px solid #ef4444',
+                                  borderTop: '2px solid transparent',
+                                  borderRadius: '50%',
+                                  animation: 'spin 1s linear infinite'
+                                }} />
+                                删除中...
+                              </>
+                            ) : (
+                              <>
+                                <X size={12} />
+                                撤回
+                              </>
+                            )}
                           </button>
                         </div>
                       )}

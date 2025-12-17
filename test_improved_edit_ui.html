@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>改进的编辑功能测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9fafb;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 12px;
+            position: relative;
+        }
+        .user { 
+            background-color: #e3f2fd; 
+            margin-left: 50px;
+        }
+        .assistant { 
+            background-color: #f3e5f5; 
+            margin-right: 50px;
+        }
+        .message-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            justify-content: flex-end;
+        }
+        .action-btn {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .action-btn:hover:not(:disabled) {
+            background-color: #f3f4f6;
+            color: #6b7280;
+        }
+        .action-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        .edit-form {
+            margin-top: 10px;
+            padding: 15px;
+            background-color: #fff3e0;
+            border-radius: 8px;
+            border: 2px solid #f59e0b;
+        }
+        .edit-textarea {
+            width: 100%;
+            height: 80px;
+            margin: 8px 0;
+            padding: 8px 12px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .edit-textarea:disabled {
+            background-color: #f9fafb;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        .edit-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .edit-btn {
+            padding: 6px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        .cancel-btn {
+            border: 1px solid #e5e7eb;
+            background: white;
+            color: #374151;
+        }
+        .save-btn {
+            border: 1px solid #6366f1;
+            background: #6366f1;
+            color: white;
+        }
+        .save-btn:disabled {
+            background: #9ca3af;
+            border-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        .spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ffffff;
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        .delete-spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ef4444;
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .success { background-color: #d1fae5; color: #065f46; }
+        .error { background-color: #fee2e2; color: #991b1b; }
+        .info { background-color: #dbeafe; color: #1e40af; }
+    </style>
+</head>
+<body>
+    <h1>改进的编辑功能测试</h1>
+    <p>这个页面演示了改进后的编辑功能，包括：</p>
+    <ul>
+        <li>✅ 防止重复提交</li>
+        <li>✅ 加载状态指示</li>
+        <li>✅ 按钮状态变化</li>
+        <li>✅ 输入框禁用</li>
+        <li>✅ 温和的成功提示</li>
+    </ul>
+    
+    <div id="messages"></div>
+    
+    <div>
+        <h3>发送新消息</h3>
+        <textarea id="newMessage" placeholder="输入消息..." style="width: 100%; height: 60px; padding: 8px;"></textarea>
+        <button onclick="sendMessage()" style="margin-top: 8px; padding: 8px 16px;">发送</button>
+    </div>
+    
+    <div id="status"></div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        let messages = [];
+        let currentSessionId = null;
+        const currentUserId = 'test_user_ui';
+        let editingMessageId = null;
+        let isEditingSaving = false;
+        let isDeletingMessage = null;
+
+        // 生成会话ID
+        function generateSessionId() {
+            return 'ui_test_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // 显示消息
+        function displayMessages() {
+            const container = document.getElementById('messages');
+            container.innerHTML = '';
+            
+            messages.forEach((message, index) => {
+                const div = document.createElement('div');
+                div.className = `message ${message.role}`;
+                
+                const isEditing = editingMessageId === message.id;
+                const isDeleting = isDeletingMessage === message.id;
+                
+                div.innerHTML = `
+                    <div><strong>${message.role === 'user' ? '👤 用户' : '🤖 AI'}:</strong></div>
+                    ${isEditing ? `
+                        <div class="edit-form">
+                            <div>编辑消息：</div>
+                            <textarea 
+                                id="edit-content-${index}" 
+                                class="edit-textarea"
+                                ${isEditingSaving ? 'disabled' : ''}
+                            >${message.content}</textarea>
+                            <div class="edit-actions">
+                                <button 
+                                    class="edit-btn cancel-btn" 
+                                    onclick="cancelEdit()"
+                                    ${isEditingSaving ? 'disabled' : ''}
+                                >
+                                    取消
+                                </button>
+                                <button 
+                                    class="edit-btn save-btn" 
+                                    onclick="saveEdit(${index})"
+                                    ${isEditingSaving ? 'disabled' : ''}
+                                >
+                                    ${isEditingSaving ? '<div class="spinner"></div>保存中...' : '保存'}
+                                </button>
+                            </div>
+                        </div>
+                    ` : `
+                        <div style="margin: 8px 0;">${message.content}</div>
+                    `}
+                    
+                    ${message.role === 'user' && !isEditing ? `
+                        <div class="message-actions">
+                            <button 
+                                class="action-btn" 
+                                onclick="editMessage(${index})"
+                                ${isEditingSaving || isDeleting ? 'disabled' : ''}
+                            >
+                                ✏️ 编辑
+                            </button>
+                            <button 
+                                class="action-btn" 
+                                onclick="deleteMessage(${index})"
+                                ${isEditingSaving || isDeleting ? 'disabled' : ''}
+                                style="color: ${isDeleting ? '#ef4444' : '#9ca3af'}"
+                            >
+                                ${isDeleting ? '<div class="delete-spinner"></div>删除中...' : '🗑️ 撤回'}
+                            </button>
+                        </div>
+                    ` : ''}
+                    
+                    <small style="color: #6b7280;">ID: ${message.id}</small>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // 发送消息
+        async function sendMessage() {
+            const textarea = document.getElementById('newMessage');
+            const content = textarea.value.trim();
+            if (!content) return;
+
+            if (!currentSessionId) {
+                currentSessionId = generateSessionId();
+            }
+
+            try {
+                showStatus('发送消息中...', 'info');
+                
+                const response = await fetch(`${API_BASE_URL}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: content,
+                        user_id: currentUserId,
+                        session_id: currentSessionId
+                    })
+                });
+
+                const result = await response.json();
+                
+                // 添加用户消息
+                messages.push({
+                    id: result.message_id,
+                    role: 'user',
+                    content: content,
+                    user_id: currentUserId
+                });
+
+                // 添加AI回复
+                messages.push({
+                    id: 'ai_' + Date.now(),
+                    role: 'assistant',
+                    content: result.response,
+                    user_id: currentUserId
+                });
+
+                textarea.value = '';
+                displayMessages();
+                showStatus('✅ 消息发送成功', 'success');
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                showStatus('❌ 发送消息失败: ' + error.message, 'error');
+            }
+        }
+
+        // 编辑消息
+        function editMessage(index) {
+            if (isEditingSaving || isDeletingMessage) return;
+            
+            editingMessageId = messages[index].id;
+            displayMessages();
+            
+            // 聚焦到编辑框
+            setTimeout(() => {
+                const textarea = document.getElementById(`edit-content-${index}`);
+                if (textarea) {
+                    textarea.focus();
+                    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+                }
+            }, 100);
+        }
+
+        // 取消编辑
+        function cancelEdit() {
+            editingMessageId = null;
+            isEditingSaving = false;
+            displayMessages();
+        }
+
+        // 保存编辑
+        async function saveEdit(index) {
+            if (isEditingSaving) return; // 防止重复提交
+            
+            const message = messages[index];
+            const newContent = document.getElementById(`edit-content-${index}`).value.trim();
+            
+            if (!newContent) {
+                showStatus('❌ 消息内容不能为空', 'error');
+                return;
+            }
+
+            // 设置加载状态
+            isEditingSaving = true;
+            displayMessages(); // 重新渲染以显示加载状态
+
+            try {
+                showStatus('保存编辑中...', 'info');
+                
+                const response = await fetch(`${API_BASE_URL}/chat/messages/${message.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: currentUserId,
+                        new_content: newContent
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.new_response) {
+                    // 重新生成了对话
+                    // 更新编辑的消息
+                    messages[index].content = newContent;
+                    
+                    // 删除该消息之后的所有消息
+                    messages = messages.slice(0, index + 1);
+                    
+                    // 添加新的AI回复
+                    messages.push({
+                        id: 'ai_' + Date.now(),
+                        role: 'assistant',
+                        content: result.new_response.content,
+                        user_id: currentUserId
+                    });
+
+                    showStatus(`✅ 消息编辑成功，已重新生成对话（删除了${result.deleted_messages_count}条消息）`, 'success');
+                } else {
+                    // 只是简单更新
+                    messages[index].content = newContent;
+                    showStatus('✅ 消息编辑成功', 'success');
+                }
+
+                // 重置编辑状态
+                editingMessageId = null;
+                displayMessages();
+                
+            } catch (error) {
+                console.error('编辑消息失败:', error);
+                showStatus('❌ 编辑消息失败: ' + error.message, 'error');
+            } finally {
+                // 无论成功还是失败，都重置加载状态
+                isEditingSaving = false;
+                displayMessages();
+            }
+        }
+
+        // 删除消息
+        async function deleteMessage(index) {
+            if (isEditingSaving || isDeletingMessage) return;
+            
+            const message = messages[index];
+            
+            if (!confirm('确定要删除这条消息吗？')) return;
+
+            // 设置删除状态
+            isDeletingMessage = message.id;
+            displayMessages();
+
+            try {
+                showStatus('删除消息中...', 'info');
+                
+                const response = await fetch(`${API_BASE_URL}/chat/messages/${message.id}?user_id=${currentUserId}`, {
+                    method: 'DELETE'
+                });
+
+                const result = await response.json();
+
+                messages.splice(index, 1);
+                showStatus('✅ 消息删除成功', 'success');
+                displayMessages();
+            } catch (error) {
+                console.error('删除消息失败:', error);
+                showStatus('❌ 删除消息失败: ' + error.message, 'error');
+            } finally {
+                // 重置删除状态
+                isDeletingMessage = null;
+                displayMessages();
+            }
+        }
+
+        // 显示状态
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            
+            if (type === 'success' || type === 'error') {
+                setTimeout(() => {
+                    status.textContent = '';
+                    status.className = '';
+                }, 3000);
+            }
+        }
+
+        // 初始化
+        displayMessages();
+        
+        // 添加键盘快捷键
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                const newMessageTextarea = document.getElementById('newMessage');
+                if (document.activeElement === newMessageTextarea) {
+                    sendMessage();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

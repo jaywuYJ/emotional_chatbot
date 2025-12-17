@@ -131,23 +131,80 @@ const ChatContainer = ({
         return;
       }
       
+      // 调试信息
+      console.log('编辑消息调试信息:', {
+        messageId,
+        message,
+        dbId: message.dbId,
+        user_id: message.user_id,
+        content: message.content
+      });
+      
       // 使用数据库ID而不是前端生成的ID
       const dbId = message.dbId || message.id;
+      
+      console.log('发送编辑请求:', {
+        dbId,
+        user_id: message.user_id || 'anonymous',
+        new_content: trimmedContent
+      });
       
       const result = await ChatAPI.updateMessage(dbId, {
         user_id: message.user_id || 'anonymous',
         new_content: trimmedContent
       });
       
-      if (onMessageUpdate) {
-        onMessageUpdate({
+      console.log('编辑响应结果:', result);
+      
+      // 处理编辑结果
+      if (result.new_response) {
+        // 如果有新的AI回复，需要更新整个消息列表
+        console.log('检测到新的AI回复，更新消息列表');
+        console.log('传递给onMessageUpdate的数据:', {
           id: messageId,
-          content: trimmedContent
+          content: trimmedContent,
+          regenerated: true,
+          newResponse: result.new_response,
+          deletedCount: result.deleted_messages_count
         });
+        if (onMessageUpdate) {
+          onMessageUpdate({
+            id: messageId,
+            content: trimmedContent,
+            regenerated: true,
+            newResponse: result.new_response,
+            deletedCount: result.deleted_messages_count
+          });
+        }
+      } else {
+        // 只是简单的内容更新
+        console.log('简单内容更新');
+        if (onMessageUpdate) {
+          onMessageUpdate({
+            id: messageId,
+            content: trimmedContent
+          });
+        }
       }
       
       setEditingMessageId(null);
       setEditContent('');
+      
+      // 如果有新回复，显示成功提示
+      if (result.new_response) {
+        console.log('消息已编辑并重新生成了回复');
+        // 强制滚动到底部以显示新消息
+        setTimeout(() => {
+          if (messagesEndRef && messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+          }
+        }, 100);
+        alert('消息已编辑并重新生成了回复！页面将自动滚动到最新消息。');
+      } else {
+        console.log('消息内容已更新');
+        alert('消息内容已更新！');
+      }
+      
     } catch (error) {
       console.error('编辑消息失败:', error);
       

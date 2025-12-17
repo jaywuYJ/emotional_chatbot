@@ -129,6 +129,17 @@ class ChatService:
         else:
             if not INTENT_AVAILABLE:
                 print("⚠ 意图识别模块不可用")
+        
+        # 初始化向量数据库（如果可用）
+        self.vector_store = None
+        try:
+            from backend.vector_store import VectorStore
+            self.vector_store = VectorStore()
+            print("✓ 向量数据库已初始化")
+        except ImportError:
+            print("⚠ 向量数据库模块不可用")
+        except Exception as e:
+            print(f"⚠ 向量数据库初始化失败: {e}")
     
     async def chat(
         self,
@@ -710,4 +721,252 @@ class ChatService:
             情绪趋势
         """
         return self.chat_engine.get_user_emotion_trends(user_id)
+    
+    async def _generate_ai_response_for_edited_message(
+        self, 
+        request: ChatRequest, 
+        edited_message
+    ) -> ChatResponse:
+        """
+        为编辑后的消息生成AI回复（类似ChatGPT/Gemini的行为）
+        这个方法不会保存用户消息（因为已经更新了），只生成和保存AI回复
+        
+        Args:
+            request: 聊天请求（包含编辑后的内容）
+            edited_message: 已编辑的消息对象
+            
+        Returns:
+            聊天响应
+        """
+        user_id = request.user_id or "anonymous"
+        session_id = request.session_id
+        message = request.message
+        
+        print(f"[EDIT] 为编辑后的消息生成AI回复: {message[:50]}...")
+        
+        # 0. 增强版输入预处理（如果启用）
+        preprocessed = None
+        if self.enhanced_processor_enabled and self.enhanced_processor:
+            try:
+                preprocessed = self.enhanced_processor.preprocess(message, user_id)
+                
+                # 检查是否被阻止
+                if preprocessed["blocked"]:
+                    return ChatResponse(
+                        response=preprocessed.get("friendly_message", "输入无效，请重新输入"),
+                        emotion="neutral",
+                        session_id=session_id,
+                        timestamp=datetime.now(),
+                        context={
+                            "blocked": True,
+                            "reason": preprocessed["warnings"],
+                            "input_validation": "failed",
+                            "regenerated": True
+                        },
+                        message_id=edited_message.id
+                    )
+                
+                # 使用清洗后的文本
+                message = preprocessed["cleaned"]
+                
+            except Exception as e:
+                print(f"输入预处理失败，使用原始消息: {e}")
+                preprocessed = None
+        
+        # 1. 分析编辑后消息的情绪
+        emotion_result = self.chat_engine.analyze_emotion(message)
+        emotion = emotion_result.get("emotion", "neutral")
+        emotion_intensity = emotion_result.get("intensity", 5.0)
+        
+        # 2. 意图识别（如果启用）
+        intent_result = None
+        if self.intent_enabled and self.intent_service:
+            try:
+                intent_analysis = self.intent_service.analyze(message, user_id)
+                intent_result = intent_analysis.get('intent', {})
+                
+                # 检查是否需要特殊处理（危机情况）
+                if intent_analysis.get('action_required', False):
+                    print(f"⚠️ 检测到用户 {user_id} 的危机情况，意图: {intent_result.get('intent')}")
+                    
+            except Exception as e:
+                print(f"意图识别失败: {e}")
+                intent_result = None
+        
+        # 3. 构建上下文（包含记忆，基于编辑后的消息）
+        context = await self.context_service.build_context(
+            user_id=user_id,
+            session_id=session_id,
+            current_message=message,
+            emotion=emotion,
+            emotion_intensity=emotion_intensity
+        )
+        
+        # 将意图信息添加到上下文中
+        if intent_result:
+            context['intent'] = intent_result
+        
+        # 4. 尝试使用RAG增强回复
+        rag_result = None
+        print(f"[EDIT] RAG检查: rag_enabled={self.rag_enabled}, rag_service={self.rag_service is not None}")
+        if self.rag_enabled and self.rag_service:
+            try:
+                print("[EDIT] 尝试使用RAG增强")
+                # 获取对话历史（现在应该包含编辑后的消息）
+                conversation_history = await self._get_conversation_history(session_id)
+                
+                # 尝试RAG增强
+                rag_result = self.rag_service.enhance_response(
+                    message=message,
+                    emotion=emotion,
+                    conversation_history=conversation_history
+                )
+                print(f"[EDIT] RAG结果: {rag_result}")
+                
+            except Exception as e:
+                print(f"RAG增强失败，使用常规回复: {e}")
+        else:
+            print("[EDIT] RAG未启用，使用常规引擎")
+        
+        # 5. 生成回复
+        if rag_result and rag_result.get("use_rag"):
+            # 使用RAG增强的回复
+            response = ChatResponse(
+                response=rag_result["answer"],
+                emotion=emotion,
+                emotion_intensity=emotion_intensity,
+                session_id=session_id,
+                message_id=edited_message.id,
+                timestamp=datetime.now()
+            )
+            # 添加RAG来源信息和预处理信息
+            response.context = {
+                "memories_count": len(context.get("memories", {}).get("all", [])),
+                "emotion_trend": context.get("emotion_context", {}).get("trend", {}).get("trend"),
+                "has_profile": bool(context.get("user_profile", {}).get("summary")),
+                "used_rag": True,
+                "knowledge_sources": len(rag_result.get("sources", [])),
+                "intent": intent_result.get('intent') if intent_result else None,
+                "intent_confidence": intent_result.get('confidence') if intent_result else None,
+                "input_preprocessed": preprocessed is not None,
+                "input_metadata": preprocessed.get("metadata") if preprocessed else None,
+                "regenerated": True
+            }
+        else:
+            # 使用常规引擎回复 - 但不调用chat方法（避免重复保存用户消息）
+            print(f"[EDIT] 使用常规引擎生成回复")
+            try:
+                # 直接调用引擎的内部方法生成回复，不保存消息
+                if hasattr(self.chat_engine, '_generate_response_with_plugins'):
+                    # 如果是带插件的引擎，调用插件方法
+                    response_text = self.chat_engine._generate_response_with_plugins(
+                        user_input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        emotion_state={
+                            "emotion": emotion,
+                            "intensity": emotion_intensity
+                        },
+                        plugin_used_ref=[None],
+                        plugin_result_ref=[None],
+                        deep_thinking=request.deep_thinking or False
+                    )
+                elif hasattr(self.chat_engine, '_call_llm_normal'):
+                    # 如果是带插件的引擎但没有插件，使用普通方法
+                    response_text = self.chat_engine._call_llm_normal(
+                        user_input=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        emotion_state={
+                            "emotion": emotion,
+                            "intensity": emotion_intensity
+                        },
+                        deep_thinking=request.deep_thinking or False
+                    )
+                else:
+                    # 使用简单引擎的方法
+                    response_text = self.chat_engine.get_openai_response(
+                        user_input=message,
+                        user_id=user_id,
+                        session_id=session_id
+                    )
+                
+                response = ChatResponse(
+                    response=response_text,
+                    emotion=emotion,
+                    emotion_intensity=emotion_intensity,
+                    session_id=session_id,
+                    message_id=edited_message.id,
+                    timestamp=datetime.now(),
+                    suggestions=emotion_result.get("suggestions", [])[:3]
+                )
+                
+            except Exception as e:
+                print(f"常规引擎调用失败: {e}")
+                import traceback
+                traceback.print_exc()
+                response = ChatResponse(
+                    response="抱歉，重新生成回复时遇到了问题。",
+                    session_id=session_id,
+                    emotion="neutral",
+                    timestamp=datetime.now(),
+                    message_id=edited_message.id
+                )
+            
+            response.context = {
+                "memories_count": len(context.get("memories", {}).get("all", [])),
+                "emotion_trend": context.get("emotion_context", {}).get("trend", {}).get("trend"),
+                "has_profile": bool(context.get("user_profile", {}).get("summary")),
+                "used_rag": False,
+                "intent": intent_result.get('intent') if intent_result else None,
+                "intent_confidence": intent_result.get('confidence') if intent_result else None,
+                "input_preprocessed": preprocessed is not None,
+                "input_metadata": preprocessed.get("metadata") if preprocessed else None,
+                "regenerated": True
+            }
+        
+        # 6. 保存AI回复到数据库
+        try:
+            with DatabaseManager() as db:
+                ai_message = db.save_message(
+                    session_id=session_id,
+                    user_id=user_id,
+                    role="assistant",
+                    content=response.response,
+                    emotion=emotion
+                )
+                print(f"[EDIT] AI回复已保存到数据库: {ai_message.id}")
+        except Exception as e:
+            print(f"保存AI回复失败: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # 7. 保存到向量数据库
+        if self.vector_store:
+            try:
+                self.vector_store.add_conversation(
+                    session_id=session_id,
+                    message=message,
+                    response=response.response,
+                    emotion=emotion
+                )
+                print(f"[EDIT] 对话已保存到向量数据库")
+            except Exception as e:
+                print(f"保存到向量数据库失败: {e}")
+        
+        # 8. 处理并存储记忆
+        try:
+            await self.memory_service.process_and_store_memories(
+                session_id=session_id,
+                user_id=user_id,
+                user_message=message,
+                bot_response=response.response,
+                emotion=emotion,
+                emotion_intensity=emotion_intensity
+            )
+            print(f"[EDIT] 记忆处理完成")
+        except Exception as e:
+            print(f"记忆处理失败: {e}")
+        
+        return response
 

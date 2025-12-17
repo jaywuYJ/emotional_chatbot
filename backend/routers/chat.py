@@ -210,6 +210,11 @@ async def delete_sessions_batch(session_ids: List[str]):
 async def update_message(message_id: str, request: MessageUpdateRequest):
     """
     修改消息内容（消息编辑功能）
+    支持类似ChatGPT/Gemini的编辑体验：
+    1. 更新消息内容
+    2. 删除该消息之后的所有消息
+    3. 重新生成对话
+    4. 更新向量数据库
     """
     try:
         # 输入验证
@@ -227,7 +232,23 @@ async def update_message(message_id: str, request: MessageUpdateRequest):
                 message_id_int = int(message_id)
             except ValueError:
                 message_id_int = message_id
-                
+            
+            # 1. 获取要编辑的消息
+            original_message = db.get_message(message_id_int, request.user_id)
+            if not original_message:
+                raise HTTPException(status_code=404, detail="消息不存在或无权修改")
+            
+            session_id = original_message.session_id
+            message_timestamp = original_message.created_at
+            
+            # 2. 删除该消息之后的所有消息（包括AI回复）
+            from backend.database import ChatMessage
+            deleted_count = db.db.query(ChatMessage).filter(
+                ChatMessage.session_id == session_id,
+                ChatMessage.created_at > message_timestamp
+            ).delete()
+            
+            # 3. 更新消息内容
             updated_message = db.update_message(
                 message_id=message_id_int,
                 user_id=request.user_id,
@@ -236,15 +257,64 @@ async def update_message(message_id: str, request: MessageUpdateRequest):
                 emotion_intensity=request.emotion_intensity
             )
             
-            if not updated_message:
-                raise HTTPException(status_code=404, detail="消息不存在或无权修改")
+            # 4. 更新向量数据库（删除相关记录）
+            try:
+                from backend.vector_store import VectorStore
+                vector_store = VectorStore()
+                # 删除该会话在该时间点之后的向量记录
+                # 注意：这里需要根据你的向量数据库实现来调整
+                vector_store.delete_conversation_after_timestamp(session_id, message_timestamp)
+            except Exception as e:
+                logger.warning(f"更新向量数据库失败: {e}")
             
-            return {
-                "message": "消息修改成功",
-                "message_id": updated_message.id,
-                "content": updated_message.content,
-                "updated_at": updated_message.created_at.isoformat() if updated_message.created_at else None
-            }
+            # 5. 重新生成对话（类似ChatGPT/Gemini的行为）
+            try:
+                from backend.models import ChatRequest
+                
+                # 创建新的聊天请求，但不保存用户消息（因为已经更新了）
+                new_request = ChatRequest(
+                    message=request.new_content.strip(),
+                    user_id=request.user_id,
+                    session_id=session_id,
+                    emotion=request.emotion,
+                    emotion_intensity=request.emotion_intensity
+                )
+                
+                # 直接调用聊天服务生成新的AI回复
+                # 这会触发完整的对话流程：情感分析、上下文构建、RAG增强、记忆处理等
+                response = await chat_service._generate_ai_response_for_edited_message(
+                    new_request, updated_message
+                )
+                
+                return {
+                    "message": "消息编辑成功，已重新生成对话",
+                    "message_id": updated_message.id,
+                    "content": updated_message.content,
+                    "updated_at": updated_message.created_at.isoformat() if updated_message.created_at else None,
+                    "new_response": {
+                        "content": response.response,
+                        "emotion": response.emotion,
+                        "suggestions": response.suggestions if hasattr(response, 'suggestions') else [],
+                        "context": response.context if hasattr(response, 'context') else {}
+                    },
+                    "deleted_messages_count": deleted_count,
+                    "regenerated": True
+                }
+                
+            except Exception as e:
+                logger.error(f"重新生成对话失败: {e}")
+                import traceback
+                traceback.print_exc()
+                # 即使重新生成失败，消息编辑仍然成功
+                return {
+                    "message": "消息编辑成功，但重新生成对话失败",
+                    "message_id": updated_message.id,
+                    "content": updated_message.content,
+                    "updated_at": updated_message.created_at.isoformat() if updated_message.created_at else None,
+                    "error": "重新生成对话失败，请手动发送消息继续对话",
+                    "deleted_messages_count": deleted_count
+                }
+            
     except HTTPException:
         raise
     except ValueError as e:

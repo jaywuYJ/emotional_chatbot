@@ -160,3 +160,45 @@ class VectorStore:
             limit=limit
         )
         return results
+    
+    def delete_conversation_after_timestamp(self, session_id: str, timestamp):
+        """删除指定时间戳之后的对话记录"""
+        try:
+            # 获取该会话的所有记录
+            results = self.conversation_collection.get(
+                where={"session_id": session_id}
+            )
+            
+            if not results['ids']:
+                return
+            
+            # 找出需要删除的记录ID
+            ids_to_delete = []
+            for i, metadata in enumerate(results['metadatas']):
+                # 比较时间戳（这里需要根据你的时间戳格式调整）
+                record_timestamp = metadata.get('timestamp')
+                if record_timestamp and record_timestamp > timestamp.isoformat():
+                    ids_to_delete.append(results['ids'][i])
+            
+            # 删除记录
+            if ids_to_delete:
+                self.conversation_collection.delete(ids=ids_to_delete)
+                logger.info(f"删除了 {len(ids_to_delete)} 条向量记录")
+                
+        except Exception as e:
+            logger.error(f"删除向量记录失败: {e}")
+    
+    def delete_conversation_by_session(self, session_id: str):
+        """删除整个会话的对话记录"""
+        try:
+            # 获取该会话的所有记录
+            results = self.conversation_collection.get(
+                where={"session_id": session_id}
+            )
+            
+            if results['ids']:
+                self.conversation_collection.delete(ids=results['ids'])
+                logger.info(f"删除了会话 {session_id} 的 {len(results['ids'])} 条向量记录")
+                
+        except Exception as e:
+            logger.error(f"删除会话向量记录失败: {e}")

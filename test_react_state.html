@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试React状态更新</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .user { background-color: #e3f2fd; }
+        .assistant { background-color: #f3e5f5; }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .debug {
+            background-color: #fff3cd;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useCallback } = React;
+
+        function TestApp() {
+            const [messages, setMessages] = useState([
+                {
+                    id: 'history_test_session_123_107_2025-12-17T09:55:24',
+                    role: 'user',
+                    content: '今天天气怎么样？',
+                    dbId: 107,
+                    user_id: 'test_user',
+                    isHistory: true
+                },
+                {
+                    id: 'history_test_session_123_108_2025-12-17T09:55:25',
+                    role: 'assistant',
+                    content: '你在哪里呢？可以告诉我你所在的城市吗？',
+                    dbId: 108,
+                    user_id: 'test_user',
+                    isHistory: true
+                },
+                {
+                    id: 'history_test_session_123_109_2025-12-17T09:55:26',
+                    role: 'user',
+                    content: '那明天呢？',
+                    dbId: 109,
+                    user_id: 'test_user',
+                    isHistory: true
+                },
+                {
+                    id: 'history_test_session_123_110_2025-12-17T09:55:27',
+                    role: 'assistant',
+                    content: '你提到"明天"，是想了解明天的天气...',
+                    dbId: 110,
+                    user_id: 'test_user',
+                    isHistory: true
+                }
+            ]);
+
+            const [debugInfo, setDebugInfo] = useState('');
+
+            const handleMessageUpdate = useCallback((updatedMessage) => {
+                console.log('handleMessageUpdate 被调用:', updatedMessage);
+                setDebugInfo(`handleMessageUpdate 被调用: ${JSON.stringify(updatedMessage, null, 2)}`);
+                
+                if (updatedMessage.regenerated && updatedMessage.newResponse) {
+                    console.log('处理编辑消息并重新生成AI回复的情况');
+                    setMessages(prevMessages => {
+                        console.log('当前消息列表:', prevMessages);
+                        
+                        const editedMessageIndex = prevMessages.findIndex(msg => msg.id === updatedMessage.id);
+                        console.log('被编辑消息索引:', editedMessageIndex);
+                        
+                        if (editedMessageIndex === -1) {
+                            console.log('未找到被编辑的消息');
+                            setDebugInfo(prev => prev + '\n❌ 未找到被编辑的消息');
+                            return prevMessages;
+                        }
+                        
+                        const editedMessage = prevMessages[editedMessageIndex];
+                        const messagesBeforeEdit = prevMessages.slice(0, editedMessageIndex);
+                        const updatedEditedMessage = {
+                            ...editedMessage,
+                            content: updatedMessage.content,
+                            timestamp: new Date().toISOString()
+                        };
+                        
+                        const newAIMessage = {
+                            id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            role: 'assistant',
+                            content: updatedMessage.newResponse.content,
+                            emotion: updatedMessage.newResponse.emotion || 'neutral',
+                            suggestions: updatedMessage.newResponse.suggestions || [],
+                            timestamp: new Date().toISOString(),
+                            user_id: 'test_user',
+                            context: updatedMessage.newResponse.context || {}
+                        };
+                        
+                        const newMessages = [
+                            ...messagesBeforeEdit,
+                            updatedEditedMessage,
+                            newAIMessage
+                        ];
+                        
+                        console.log('更新后的消息列表:', newMessages);
+                        setDebugInfo(prev => prev + `\n✅ 消息更新成功，从 ${prevMessages.length} 条变为 ${newMessages.length} 条`);
+                        
+                        return newMessages;
+                    });
+                } else {
+                    console.log('处理简单的消息内容更新');
+                    setMessages(prevMessages => 
+                        prevMessages.map(msg => 
+                            msg.id === updatedMessage.id 
+                                ? { ...msg, content: updatedMessage.content } 
+                                : msg
+                        )
+                    );
+                }
+            }, []);
+
+            const simulateEdit = () => {
+                const messageToEdit = messages[0];
+                console.log('模拟编辑消息:', messageToEdit);
+                
+                // 模拟编辑响应
+                const mockResponse = {
+                    content: "今天北京的天气如何？",
+                    newResponse: {
+                        content: "你好呀～虽然你问的是北京的天气，但我注意到你之前发过测试信息，可能还在熟悉我们的对话方式。没关系，我很高兴你愿意继续和我交流 🌤️\n\n今天北京天气晴朗，气温在20℃左右...",
+                        emotion: "neutral",
+                        suggestions: [],
+                        context: {}
+                    },
+                    deletedCount: 3,
+                    regenerated: true
+                };
+
+                handleMessageUpdate({
+                    id: messageToEdit.id,
+                    ...mockResponse
+                });
+            };
+
+            return (
+                <div>
+                    <h1>React状态更新测试</h1>
+                    
+                    <button onClick={simulateEdit}>
+                        模拟编辑第一条消息
+                    </button>
+                    
+                    <div className="debug">
+                        <strong>调试信息:</strong>
+                        <pre>{debugInfo}</pre>
+                    </div>
+                    
+                    <h3>消息列表 (共 {messages.length} 条):</h3>
+                    {messages.map((message, index) => (
+                        <div key={message.id} className={`message ${message.role}`}>
+                            <strong>{message.role === 'user' ? '用户' : 'AI'}:</strong> {message.content}
+                            <br />
+                            <small>ID: {message.id}</small>
+                            {message.dbId && <small> | DB ID: {message.dbId}</small>}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<TestApp />, document.getElementById('root'));
+    </script>
+</body>
+</html>

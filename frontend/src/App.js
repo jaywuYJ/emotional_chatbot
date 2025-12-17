@@ -25,6 +25,7 @@ function App() {
   const [showPersonalizationPanel, setShowPersonalizationPanel] = useState(false);
   const [showHistoryManagement, setShowHistoryManagement] = useState(false);
   const [deepThinkActive, setDeepThinkActive] = useState(false);
+  const [forceUpdateKey, setForceUpdateKey] = useState(0);
   
   // 主题管理
   const { theme, toggleTheme } = useTheme();
@@ -152,14 +153,87 @@ function App() {
 
   // 消息更新处理
   const handleMessageUpdate = useCallback((updatedMessage) => {
-    setMessages(prevMessages => 
-      prevMessages.map(msg => 
-        msg.id === updatedMessage.id 
-          ? { ...msg, content: updatedMessage.content } 
-          : msg
-      )
-    );
-  }, [setMessages]);
+    console.log('handleMessageUpdate 被调用:', updatedMessage);
+    
+    if (updatedMessage.regenerated && updatedMessage.newResponse) {
+      console.log('处理编辑消息并重新生成AI回复的情况');
+      // 编辑消息并重新生成AI回复的情况
+      setMessages(prevMessages => {
+        console.log('当前消息列表:', prevMessages);
+        
+        // 找到被编辑消息的索引
+        const editedMessageIndex = prevMessages.findIndex(msg => msg.id === updatedMessage.id);
+        console.log('被编辑消息索引:', editedMessageIndex);
+        
+        if (editedMessageIndex === -1) {
+          console.log('未找到被编辑的消息');
+          return prevMessages;
+        }
+        
+        // 获取被编辑消息的时间戳（用于确定删除范围）
+        const editedMessage = prevMessages[editedMessageIndex];
+        const editedTimestamp = editedMessage.timestamp;
+        
+        console.log('被编辑的消息:', editedMessage);
+        
+        // 创建新的消息列表：
+        // 1. 保留编辑消息之前的所有消息
+        // 2. 更新编辑的消息内容
+        // 3. 删除编辑消息之后的所有消息
+        // 4. 添加新的AI回复
+        const messagesBeforeEdit = prevMessages.slice(0, editedMessageIndex);
+        const updatedEditedMessage = {
+          ...editedMessage,
+          content: updatedMessage.content,
+          timestamp: new Date().toISOString()
+        };
+        
+        // 创建新的AI回复消息
+        const newAIMessage = {
+          id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          role: 'assistant',
+          content: updatedMessage.newResponse.content,
+          emotion: updatedMessage.newResponse.emotion || 'neutral',
+          suggestions: updatedMessage.newResponse.suggestions || [],
+          timestamp: new Date().toISOString(),
+          user_id: currentUserId,
+          context: updatedMessage.newResponse.context || {}
+        };
+        
+        console.log(`消息编辑：删除了 ${updatedMessage.deletedCount || 0} 条后续消息，重新生成AI回复`);
+        console.log('新的AI消息:', newAIMessage);
+        
+        const newMessages = [
+          ...messagesBeforeEdit,
+          updatedEditedMessage,
+          newAIMessage
+        ];
+        
+        console.log('更新后的消息列表:', newMessages);
+        
+        // 强制触发重新渲染
+        setTimeout(() => {
+          console.log('强制滚动到底部');
+          setForceUpdateKey(prev => prev + 1);
+          if (messagesEndRef && messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+          }
+        }, 200);
+        
+        return newMessages;
+      });
+    } else {
+      console.log('处理简单的消息内容更新');
+      // 简单的消息内容更新
+      setMessages(prevMessages => 
+        prevMessages.map(msg => 
+          msg.id === updatedMessage.id 
+            ? { ...msg, content: updatedMessage.content } 
+            : msg
+        )
+      );
+    }
+  }, [setMessages, currentUserId]);
 
   // 消息删除处理
   const handleMessageDelete = useCallback((messageId) => {
@@ -198,6 +272,7 @@ function App() {
       />
 
       <ChatContainer
+        key={forceUpdateKey}
         messages={messages}
         isLoading={isLoading}
         suggestions={suggestions}

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>删除功能UI刷新测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+        .user-message {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        .ai-message {
+            border-left-color: #6f42c1;
+            background: #e2d9f3;
+        }
+        .message-header {
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        .message-content {
+            margin-bottom: 8px;
+        }
+        .message-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .btn-edit {
+            background: #007bff;
+            color: white;
+        }
+        .btn-delete {
+            background: #dc3545;
+            color: white;
+        }
+        .btn:hover {
+            opacity: 0.8;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 8px;
+        }
+        .input-group {
+            margin-bottom: 10px;
+        }
+        .input-group label {
+            display: inline-block;
+            width: 100px;
+            font-weight: bold;
+        }
+        .input-group input, .input-group textarea {
+            width: 300px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>删除功能UI刷新测试</h1>
+        
+        <div class="controls">
+            <h3>测试控制</h3>
+            <div class="input-group">
+                <label>会话ID:</label>
+                <input type="text" id="sessionId" value="ui_test_session">
+            </div>
+            <div class="input-group">
+                <label>用户ID:</label>
+                <input type="text" id="userId" value="ui_test_user">
+            </div>
+            <div class="input-group">
+                <label>消息内容:</label>
+                <textarea id="messageContent" rows="2">测试删除功能的UI刷新</textarea>
+            </div>
+            <button class="btn btn-edit" onclick="sendMessage()">发送消息</button>
+            <button class="btn btn-delete" onclick="clearMessages()">清空消息</button>
+        </div>
+
+        <div id="status"></div>
+        
+        <div id="messages">
+            <!-- 消息将在这里显示 -->
+        </div>
+        
+        <div class="log" id="log">
+            <strong>操作日志:</strong><br>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let messages = [];
+        
+        function log(message) {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.innerHTML += `[${timestamp}] ${message}<br>`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+        
+        function showStatus(message, type = 'success') {
+            const statusElement = document.getElementById('status');
+            statusElement.className = `status ${type}`;
+            statusElement.textContent = message;
+            setTimeout(() => {
+                statusElement.textContent = '';
+                statusElement.className = 'status';
+            }, 3000);
+        }
+        
+        function renderMessages() {
+            const messagesContainer = document.getElementById('messages');
+            messagesContainer.innerHTML = '';
+            
+            log(`渲染消息列表，共 ${messages.length} 条消息`);
+            
+            messages.forEach((msg, index) => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${msg.role === 'user' ? 'user-message' : 'ai-message'}`;
+                messageDiv.innerHTML = `
+                    <div class="message-header">
+                        ${msg.role === 'user' ? '👤 用户' : '🤖 AI'} - ID: ${msg.id} (dbId: ${msg.dbId || 'N/A'})
+                    </div>
+                    <div class="message-content">${msg.content}</div>
+                    ${msg.role === 'user' ? `
+                        <div class="message-actions">
+                            <button class="btn btn-edit" onclick="editMessage(${index})">编辑</button>
+                            <button class="btn btn-delete" onclick="deleteMessage(${index})">删除</button>
+                        </div>
+                    ` : ''}
+                `;
+                messagesContainer.appendChild(messageDiv);
+            });
+        }
+        
+        async function sendMessage() {
+            const sessionId = document.getElementById('sessionId').value;
+            const userId = document.getElementById('userId').value;
+            const content = document.getElementById('messageContent').value;
+            
+            if (!content.trim()) {
+                showStatus('请输入消息内容', 'error');
+                return;
+            }
+            
+            try {
+                log(`发送消息: ${content}`);
+                
+                const response = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: content,
+                        session_id: sessionId,
+                        user_id: userId
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                log(`消息发送成功: 用户消息ID=${result.message_id}, AI消息ID=${result.ai_message_id}`);
+                
+                // 添加用户消息
+                const userMessage = {
+                    id: result.message_id,
+                    dbId: result.message_id,
+                    role: 'user',
+                    content: content,
+                    user_id: userId
+                };
+                messages.push(userMessage);
+                
+                // 添加AI回复
+                const aiMessage = {
+                    id: result.ai_message_id || Date.now(),
+                    dbId: result.ai_message_id,
+                    role: 'assistant',
+                    content: result.response,
+                    user_id: userId
+                };
+                messages.push(aiMessage);
+                
+                renderMessages();
+                showStatus('消息发送成功');
+                
+                // 清空输入框
+                document.getElementById('messageContent').value = '';
+                
+            } catch (error) {
+                log(`发送消息失败: ${error.message}`);
+                showStatus(`发送失败: ${error.message}`, 'error');
+            }
+        }
+        
+        async function deleteMessage(index) {
+            const message = messages[index];
+            if (!message || message.role !== 'user') {
+                showStatus('只能删除用户消息', 'error');
+                return;
+            }
+            
+            if (!confirm('确定要删除这条消息吗？')) {
+                return;
+            }
+            
+            try {
+                log(`删除消息: ID=${message.id}, dbId=${message.dbId}`);
+                
+                const response = await fetch(`${API_BASE}/chat/messages/${message.dbId}?user_id=${message.user_id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                log(`删除成功: ${JSON.stringify(result)}`);
+                
+                // 模拟前端删除逻辑
+                const deletedMessages = result.deleted_messages || [];
+                log(`后端返回的删除ID列表: ${JSON.stringify(deletedMessages)}`);
+                
+                const beforeCount = messages.length;
+                messages = messages.filter(msg => {
+                    const dbId = msg.dbId || msg.id;
+                    const shouldDelete = deletedMessages.includes(parseInt(dbId)) || 
+                                        deletedMessages.includes(String(dbId)) ||
+                                        deletedMessages.includes(dbId);
+                    
+                    if (shouldDelete) {
+                        log(`删除消息: ${msg.id} (dbId: ${dbId}), 角色: ${msg.role}`);
+                    }
+                    return !shouldDelete;
+                });
+                
+                const afterCount = messages.length;
+                log(`删除前: ${beforeCount} 条，删除后: ${afterCount} 条，实际删除: ${beforeCount - afterCount} 条`);
+                
+                renderMessages();
+                showStatus(`删除成功，删除了 ${beforeCount - afterCount} 条消息`);
+                
+            } catch (error) {
+                log(`删除消息失败: ${error.message}`);
+                showStatus(`删除失败: ${error.message}`, 'error');
+            }
+        }
+        
+        function editMessage(index) {
+            const message = messages[index];
+            const newContent = prompt('编辑消息内容:', message.content);
+            if (newContent && newContent !== message.content) {
+                // 这里可以实现编辑功能
+                log(`编辑消息: ${message.id} -> ${newContent}`);
+                showStatus('编辑功能待实现', 'error');
+            }
+        }
+        
+        function clearMessages() {
+            messages = [];
+            renderMessages();
+            log('清空所有消息');
+            showStatus('消息已清空');
+        }
+        
+        // 页面加载时的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            log('页面加载完成，删除功能UI测试准备就绪');
+            renderMessages();
+        });
+    </script>
+</body>
+</html>

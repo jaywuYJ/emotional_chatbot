@@ -26,7 +26,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
-    message_id: int  # ID of the newly created message
+    message_id: int  # ID of the newly created user message
+    ai_message_id: Optional[int] = None  # ID of the AI response message
     emotion: Optional[str] = None
     emotion_intensity: Optional[float] = None
     suggestions: Optional[List[str]] = None

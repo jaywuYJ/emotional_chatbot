@@ -277,6 +277,7 @@ const ChatContainer = ({
     try {
       const message = messages.find(m => m.id === messageId);
       if (!message) {
+        console.error('前端消息不存在:', messageId);
         alert('消息不存在');
         return;
       }
@@ -284,13 +285,46 @@ const ChatContainer = ({
       // 使用数据库ID而不是前端生成的ID
       const dbId = message.dbId || message.id;
       
+      console.log('删除消息调试信息:', {
+        messageId,
+        message,
+        dbId,
+        user_id: message.user_id || 'anonymous'
+      });
+      
       const result = await ChatAPI.deleteMessage(dbId, message.user_id || 'anonymous');
       
+      console.log('🎉 删除消息API调用成功:', result);
+      
       if (onMessageDelete) {
-        onMessageDelete(messageId);
+        const deleteInfo = {
+          messageId: messageId,
+          deletedCount: result.deleted_count || 1,
+          deletedMessages: result.deleted_messages || [],
+          result: result
+        };
+        
+        console.log('📤 传递删除信息给父组件:', deleteInfo);
+        console.log('🔍 删除的消息ID详情:', {
+          原始ID: messageId,
+          数据库ID: dbId,
+          后端返回的删除列表: result.deleted_messages,
+          删除数量: result.deleted_count
+        });
+        
+        // 传递删除结果信息给父组件
+        onMessageDelete(deleteInfo);
+      } else {
+        console.warn('⚠️ onMessageDelete 回调函数未定义');
       }
     } catch (error) {
       console.error('撤回消息失败:', error);
+      console.error('错误详情:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
       
       // 更友好的错误提示
       let errorMessage = '撤回消息失败，请重试';
@@ -298,8 +332,11 @@ const ChatContainer = ({
         errorMessage = '消息不存在或无权撤回';
       } else if (error.response?.status === 500) {
         errorMessage = '服务器错误，请稍后重试';
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
       }
       
+      console.error('显示错误消息:', errorMessage);
       alert(errorMessage);
     } finally {
       // 重置删除状态
@@ -456,66 +493,75 @@ const ChatContainer = ({
                           </FeedbackButton>
                         </FeedbackButtons>
                       )}
-                      {message.role === 'user' && (
-                        <div style={{ 
-                          display: 'flex', 
-                          gap: '8px', 
-                          marginTop: '4px' 
-                        }}>
-                          <button
-                            onClick={() => handleEditStart(message)}
-                            disabled={isEditingSaving || isDeletingMessage === message.id}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: (isEditingSaving || isDeletingMessage === message.id) ? '#d1d5db' : '#9ca3af',
-                              fontSize: '12px',
-                              cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '2px',
-                              opacity: (isEditingSaving || isDeletingMessage === message.id) ? 0.5 : 1
-                            }}
-                          >
-                            <PenLine size={12} />
-                            编辑
-                          </button>
-                          <button
-                            onClick={() => handleDeleteMessage(message.id)}
-                            disabled={isEditingSaving || isDeletingMessage === message.id}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: isDeletingMessage === message.id ? '#ef4444' : (isEditingSaving ? '#d1d5db' : '#9ca3af'),
-                              fontSize: '12px',
-                              cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '2px',
-                              opacity: isEditingSaving ? 0.5 : 1
-                            }}
-                          >
-                            {isDeletingMessage === message.id ? (
-                              <>
-                                <div style={{
-                                  width: '12px',
-                                  height: '12px',
-                                  border: '2px solid #ef4444',
-                                  borderTop: '2px solid transparent',
-                                  borderRadius: '50%',
-                                  animation: 'spin 1s linear infinite'
-                                }} />
-                                删除中...
-                              </>
-                            ) : (
-                              <>
-                                <X size={12} />
-                                撤回
-                              </>
+                      {message.role === 'user' && (() => {
+                        // 找到最近的用户消息
+                        const userMessages = messages.filter(m => m.role === 'user');
+                        const latestUserMessage = userMessages[userMessages.length - 1];
+                        const isLatestUserMessage = latestUserMessage && latestUserMessage.id === message.id;
+                        
+                        return (
+                          <div style={{ 
+                            display: 'flex', 
+                            gap: '8px', 
+                            marginTop: '4px' 
+                          }}>
+                            <button
+                              onClick={() => handleEditStart(message)}
+                              disabled={isEditingSaving || isDeletingMessage === message.id}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: (isEditingSaving || isDeletingMessage === message.id) ? '#d1d5db' : '#9ca3af',
+                                fontSize: '12px',
+                                cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '2px',
+                                opacity: (isEditingSaving || isDeletingMessage === message.id) ? 0.5 : 1
+                              }}
+                            >
+                              <PenLine size={12} />
+                              编辑
+                            </button>
+                            {isLatestUserMessage && (
+                              <button
+                                onClick={() => handleDeleteMessage(message.id)}
+                                disabled={isEditingSaving || isDeletingMessage === message.id}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: isDeletingMessage === message.id ? '#ef4444' : (isEditingSaving ? '#d1d5db' : '#9ca3af'),
+                                  fontSize: '12px',
+                                  cursor: (isEditingSaving || isDeletingMessage === message.id) ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '2px',
+                                  opacity: isEditingSaving ? 0.5 : 1
+                                }}
+                              >
+                                {isDeletingMessage === message.id ? (
+                                  <>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      border: '2px solid #ef4444',
+                                      borderTop: '2px solid transparent',
+                                      borderRadius: '50%',
+                                      animation: 'spin 1s linear infinite'
+                                    }} />
+                                    删除中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <X size={12} />
+                                    撤回
+                                  </>
+                                )}
+                              </button>
                             )}
-                          </button>
-                        </div>
-                      )}
+                          </div>
+                        );
+                      })()}
                     </>
                   )}
                 </MessageWrapper>

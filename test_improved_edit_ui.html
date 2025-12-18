@@ -393,7 +393,7 @@
             
             const message = messages[index];
             
-            if (!confirm('确定要删除这条消息吗？')) return;
+            if (!confirm('确定要删除这条消息吗？如果是用户消息，将同时删除对应的AI回复。')) return;
 
             // 设置删除状态
             isDeletingMessage = message.id;
@@ -407,9 +407,23 @@
                 });
 
                 const result = await response.json();
+                console.log('删除结果:', result);
 
-                messages.splice(index, 1);
-                showStatus('✅ 消息删除成功', 'success');
+                // 根据后端返回的删除信息更新消息列表
+                if (result.deleted_messages && result.deleted_messages.length > 0) {
+                    // 删除所有被删除的消息
+                    messages = messages.filter(msg => {
+                        const msgId = parseInt(msg.id) || msg.id;
+                        return !result.deleted_messages.includes(msgId);
+                    });
+                    
+                    showStatus(`✅ 成功删除 ${result.deleted_count} 条消息`, 'success');
+                } else {
+                    // 回退到删除单条消息
+                    messages.splice(index, 1);
+                    showStatus('✅ 消息删除成功', 'success');
+                }
+                
                 displayMessages();
             } catch (error) {
                 console.error('删除消息失败:', error);

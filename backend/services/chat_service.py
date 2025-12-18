@@ -343,19 +343,24 @@ class ChatService:
                     
                     # RAG分支需要保存AI回复
                     print(f"ChatService RAG分支：保存AI回复")
-                    db.save_message(
+                    ai_message = db.save_message(
                         session_id=session_id,
                         user_id=user_id,
                         role="assistant",
                         content=response.response,
                         emotion=emotion
                     )
-                    print(f"ChatService RAG分支：消息保存完成")
+                    print(f"ChatService RAG分支：消息保存完成，AI消息ID: {ai_message.id}")
+                    # 将AI消息ID添加到响应中
+                    response.ai_message_id = ai_message.id
                     
             except Exception as e:
                 print(f"ChatService数据库操作失败: {e}")
                 import traceback
                 traceback.print_exc()
+        else:
+            # 非RAG分支，AI消息已经在llm_with_plugins.py中保存，只需要确保ai_message_id被传递
+            print(f"ChatService 非RAG分支：AI消息ID已从llm_with_plugins获取: {response.ai_message_id}")
         
         # 6. 处理并存储记忆
         await self.memory_service.process_and_store_memories(

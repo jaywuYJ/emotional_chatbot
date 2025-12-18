@@ -91,12 +91,22 @@ export const useChat = (currentUserId) => {
 
       // 添加机器人回复
       const botMessage = {
-        id: Date.now() + 1,
+        id: response.ai_message_id || Date.now() + 1,  // 使用后端返回的AI消息ID
         role: 'assistant',
         content: response.response,
         emotion: response.emotion,
-        timestamp: new Date()
+        timestamp: new Date(),
+        dbId: response.ai_message_id,  // 设置数据库ID
+        user_id: currentUserId  // 设置用户ID（AI消息也使用相同的用户ID）
       };
+      
+      console.log('🤖 创建AI消息:', {
+        id: botMessage.id,
+        dbId: botMessage.dbId,
+        ai_message_id: response.ai_message_id,
+        user_id: botMessage.user_id
+      });
+      
       setMessages(prev => [...prev, botMessage]);
 
       // 清空附件和URL
@@ -120,7 +130,9 @@ export const useChat = (currentUserId) => {
         id: Date.now() + 1,
         role: 'assistant',
         content: errorMsg,
-        timestamp: new Date()
+        timestamp: new Date(),
+        dbId: null,  // 错误消息没有数据库ID
+        user_id: currentUserId
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {

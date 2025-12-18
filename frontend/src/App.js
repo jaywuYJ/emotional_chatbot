@@ -97,7 +97,8 @@ function App() {
   // 发送消息
   const sendMessage = useCallback(async () => {
     await sendMessageHook(inputValue, attachments, setInputValue, setAttachments, setDetectedURLs, deepThinkActive);
-    loadHistorySessions(); // 刷新历史会话列表
+    // 只有在发送新消息时才刷新历史会话列表（创建新会话或更新现有会话）
+    loadHistorySessions();
     setTimeout(() => inputRef.current?.focus(), 100);
   }, [inputValue, attachments, sendMessageHook, setInputValue, setAttachments, setDetectedURLs, loadHistorySessions, deepThinkActive]);
 
@@ -190,12 +191,13 @@ function App() {
         
         // 创建新的AI回复消息
         const newAIMessage = {
-          id: `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          id: updatedMessage.newResponse.ai_message_id || `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           role: 'assistant',
           content: updatedMessage.newResponse.content,
           emotion: updatedMessage.newResponse.emotion || 'neutral',
           suggestions: updatedMessage.newResponse.suggestions || [],
           timestamp: new Date().toISOString(),
+          dbId: updatedMessage.newResponse.ai_message_id,  // 设置数据库ID
           user_id: currentUserId,
           context: updatedMessage.newResponse.context || {}
         };
@@ -236,9 +238,120 @@ function App() {
   }, [setMessages, currentUserId]);
 
   // 消息删除处理
-  const handleMessageDelete = useCallback((messageId) => {
-    setMessages(prevMessages => prevMessages.filter(msg => msg.id !== messageId));
-  }, [setMessages]);
+  const handleMessageDelete = useCallback((deleteInfo) => {
+    console.log('🗑️ handleMessageDelete 被调用:', deleteInfo);
+    
+    // 兼容旧的调用方式（直接传递messageId）
+    if (typeof deleteInfo === 'string') {
+      console.log('使用旧的删除方式，直接删除消息ID:', deleteInfo);
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== deleteInfo));
+      return;
+    }
+    
+    // 新的调用方式（传递删除信息对象）
+    const { messageId, deletedCount, deletedMessages, result } = deleteInfo;
+    console.log('🔍 删除信息详情:', {
+      messageId,
+      deletedCount,
+      deletedMessages,
+      result
+    });
+    
+    setMessages(prevMessages => {
+      console.log('📊 删除前消息状态:');
+      console.log(`  总消息数: ${prevMessages.length}`);
+      prevMessages.forEach((msg, index) => {
+        console.log(`  ${index + 1}. ID: ${msg.id}, dbId: ${msg.dbId}, 角色: ${msg.role}, 内容: ${msg.content.substring(0, 30)}...`);
+      });
+      
+      // 如果后端返回了具体删除的消息ID列表，使用它们
+      if (deletedMessages && deletedMessages.length > 0) {
+        console.log('🎯 使用后端返回的删除ID列表:', deletedMessages);
+        
+        const newMessages = prevMessages.filter(msg => {
+          // 检查消息的数据库ID是否在删除列表中
+          const dbId = msg.dbId || msg.id;
+          const shouldDelete = deletedMessages.includes(parseInt(dbId)) || 
+                              deletedMessages.includes(String(dbId)) ||
+                              deletedMessages.includes(dbId);
+          
+          if (shouldDelete) {
+            console.log(`❌ 删除消息: ${msg.id} (dbId: ${dbId}), 角色: ${msg.role}`);
+          } else {
+            console.log(`✅ 保留消息: ${msg.id} (dbId: ${dbId}), 角色: ${msg.role}`);
+          }
+          return !shouldDelete;
+        });
+        
+        console.log('📊 删除后消息状态:');
+        console.log(`  删除前: ${prevMessages.length} 条`);
+        console.log(`  删除后: ${newMessages.length} 条`);
+        console.log(`  实际删除: ${prevMessages.length - newMessages.length} 条`);
+        
+        // 强制触发重新渲染和状态同步
+        setTimeout(() => {
+          console.log('🔄 强制触发重新渲染');
+          setForceUpdateKey(prev => prev + 1);
+          
+          // 确保滚动到底部
+          if (messagesEndRef && messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+          }
+        }, 100);
+        
+        // 额外的强制更新，确保UI同步
+        setTimeout(() => {
+          console.log('🔄 额外的强制更新');
+          setForceUpdateKey(prev => prev + 1);
+          
+          // 重新加载当前会话历史以确保数据同步
+          if (sessionId && loadSessionHistory) {
+            console.log('🔄 重新加载会话历史以确保同步');
+            loadSessionHistory(sessionId, setMessages, setSuggestions);
+          }
+        }, 500);
+        
+        // 检查删除后的会话状态
+        if (newMessages.length === 0) {
+          console.log('🗑️ 会话已清空，重置会话状态');
+          // 如果所有消息都被删除了，重置会话状态
+          setTimeout(() => {
+            setSessionId(null);
+            setSuggestions([]);
+          }, 200);
+        }
+        
+        return newMessages;
+      } else {
+        console.log('⚠️ 后端未返回删除ID列表，使用回退方案');
+        // 回退到只删除指定的消息
+        const newMessages = prevMessages.filter(msg => msg.id !== messageId);
+        console.log(`回退删除: ${prevMessages.length} -> ${newMessages.length}`);
+        
+        // 检查删除后的会话状态
+        if (newMessages.length === 0) {
+          console.log('🗑️ 会话已清空（回退方案），重置会话状态');
+          setTimeout(() => {
+            setSessionId(null);
+            setSuggestions([]);
+          }, 200);
+        }
+        
+        // 回退方案也需要强制更新
+        setTimeout(() => {
+          console.log('🔄 回退方案强制更新');
+          setForceUpdateKey(prev => prev + 1);
+          
+          if (sessionId && loadSessionHistory) {
+            console.log('🔄 回退方案重新加载会话历史');
+            loadSessionHistory(sessionId, setMessages, setSuggestions);
+          }
+        }, 500);
+        
+        return newMessages;
+      }
+    });
+  }, [setMessages, setForceUpdateKey, setSessionId, setSuggestions, sessionId, loadSessionHistory]);
 
   // 快捷建议点击
   const handleSuggestionClick = useCallback((suggestion) => {

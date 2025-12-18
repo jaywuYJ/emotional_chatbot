@@ -186,7 +186,7 @@ class ChatAPI {
   static async deleteMessage(messageId, userId) {
     try {
       const response = await axios.delete(`${API_BASE_URL}/chat/messages/${messageId}`, {
-        params: { userId },
+        params: { user_id: userId }, // 修复参数名，后端期望 user_id
         headers: {
           'Content-Type': 'application/json',
         },

@@ -295,7 +295,8 @@ async def update_message(message_id: str, request: MessageUpdateRequest):
                         "content": response.response,
                         "emotion": response.emotion,
                         "suggestions": response.suggestions if hasattr(response, 'suggestions') else [],
-                        "context": response.context if hasattr(response, 'context') else {}
+                        "context": response.context if hasattr(response, 'context') else {},
+                        "ai_message_id": response.ai_message_id if hasattr(response, 'ai_message_id') else None
                     },
                     "deleted_messages_count": deleted_count,
                     "regenerated": True
@@ -330,30 +331,72 @@ from fastapi import Query
 async def delete_message(message_id: str, user_id: str = Query(...)):
     """
     删除（撤回）消息
+    只允许删除最近的一条用户消息
     """
     try:
-        from backend.database import DatabaseManager
+        logger.info(f"收到删除消息请求: message_id={message_id}, user_id={user_id}")
+        
+        from backend.database import DatabaseManager, ChatMessage
         
         with DatabaseManager() as db:
             # 尝试将message_id转换为整数，如果失败则保持字符串
             try:
                 message_id_int = int(message_id)
+                logger.info(f"消息ID转换成功: {message_id} -> {message_id_int}")
             except ValueError:
                 message_id_int = message_id
-                
-            success = db.delete_message(message_id=message_id_int, user_id=user_id)
+                logger.warning(f"消息ID转换失败，保持原值: {message_id}")
             
-            if not success:
+            # 先检查消息是否存在
+            message = db.get_message(message_id_int, user_id)
+            if not message:
+                logger.warning(f"消息不存在或无权删除: message_id={message_id_int}, user_id={user_id}")
                 raise HTTPException(status_code=404, detail="消息不存在或无权删除")
             
+            # 检查是否为用户消息
+            if message.role != 'user':
+                logger.warning(f"只能删除用户消息: message_id={message_id_int}, role={message.role}")
+                raise HTTPException(status_code=403, detail="只能删除自己发送的消息")
+            
+            logger.info(f"找到用户消息: {message.id}, 内容: {message.content[:50]}...")
+            
+            # 检查是否为该会话中最近的一条用户消息
+            latest_user_message = db.db.query(ChatMessage).filter(
+                ChatMessage.session_id == message.session_id,
+                ChatMessage.user_id == user_id,
+                ChatMessage.role == 'user'
+            ).order_by(ChatMessage.created_at.desc()).first()
+            
+            if not latest_user_message or latest_user_message.id != message.id:
+                logger.warning(f"只能删除最近的一条用户消息: message_id={message_id_int}, latest_id={latest_user_message.id if latest_user_message else None}")
+                raise HTTPException(status_code=403, detail="只能撤回最近发送的一条消息")
+            
+            logger.info(f"验证通过，这是最近的用户消息: {message.id}")
+            
+            # 执行删除
+            result = db.delete_message(message_id=message_id_int, user_id=user_id)
+            
+            if not result.get("success"):
+                error_msg = result.get("error", "删除消息失败")
+                logger.error(f"删除消息失败: message_id={message_id_int}, user_id={user_id}, error={error_msg}")
+                raise HTTPException(status_code=500, detail=error_msg)
+            
+            deleted_count = result.get("deleted_count", 1)
+            deleted_messages = result.get("deleted_messages", [])
+            
+            logger.info(f"消息删除成功: message_id={message_id_int}, 删除了 {deleted_count} 条消息")
             return {
                 "message": "消息撤回成功",
-                "message_id": message_id
+                "message_id": message_id,
+                "deleted_count": deleted_count,
+                "deleted_messages": deleted_messages
             }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"删除消息错误: {e}")
+        import traceback
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -420,29 +420,135 @@ class DatabaseManager:
         return message
     
     def delete_message(self, message_id, user_id):
-        """删除（撤回）消息"""
+        """删除（撤回）消息，如果是用户消息，同时删除对应的AI回复"""
+        print(f"[DELETE] 开始删除消息: message_id={message_id}, user_id={user_id}")
+        
         message = self.get_message(message_id, user_id)
         if not message:
-            return False
+            print(f"[DELETE] 消息不存在或无权删除: message_id={message_id}, user_id={user_id}")
+            return {
+                "success": False,
+                "error": "消息不存在或无权删除"
+            }
+        
+        print(f"[DELETE] 找到消息: {message.id}, 角色: {message.role}, 内容: {message.content[:50]}...")
         
         try:
-            # 删除相关的情感分析记录
-            self.db.query(EmotionAnalysis).filter(EmotionAnalysis.message_id == message_id).delete()
+            messages_to_delete = [message]
             
-            # 删除相关的反馈记录
-            self.db.query(UserFeedback).filter(UserFeedback.message_id == message_id).delete()
+            # 如果是用户消息，查找对应的AI回复
+            if message.role == 'user':
+                print(f"[DELETE] 查找用户消息 {message.id} 对应的AI回复...")
+                print(f"[DELETE] 用户消息时间: {message.created_at}")
+                print(f"[DELETE] 会话ID: {message.session_id}")
+                
+                # 首先查看该会话中的所有AI消息
+                all_ai_messages = self.db.query(ChatMessage).filter(
+                    ChatMessage.session_id == message.session_id,
+                    ChatMessage.role == 'assistant'
+                ).order_by(ChatMessage.created_at.asc()).all()
+                
+                print(f"[DELETE] 会话中总共有 {len(all_ai_messages)} 条AI消息")
+                for ai_msg in all_ai_messages:
+                    print(f"[DELETE]   AI消息 {ai_msg.id}: 时间={ai_msg.created_at}, 用户ID={ai_msg.user_id}")
+                    time_diff = (ai_msg.created_at - message.created_at).total_seconds()
+                    print(f"[DELETE]   时间差: {time_diff}秒 ({'之后' if time_diff > 0 else '之前'})")
+                
+                # 查找该用户消息之后的AI回复
+                ai_responses = self.db.query(ChatMessage).filter(
+                    ChatMessage.session_id == message.session_id,
+                    ChatMessage.role == 'assistant',
+                    ChatMessage.created_at > message.created_at
+                ).order_by(ChatMessage.created_at.asc()).all()
+                
+                print(f"[DELETE] 用户消息之后找到 {len(ai_responses)} 条AI回复")
+                
+                if ai_responses:
+                    # 只删除紧接着的第一条AI回复
+                    first_ai_response = ai_responses[0]
+                    print(f"[DELETE] 将删除第一条AI回复: {first_ai_response.id}, 内容: {first_ai_response.content[:50]}...")
+                    messages_to_delete.append(first_ai_response)
+                else:
+                    print(f"[DELETE] 未找到用户消息之后的AI回复")
+                    
+                    # 如果没找到，尝试查找最近的AI回复（可能时间戳有微小差异）
+                    print(f"[DELETE] 尝试查找最近的AI回复...")
+                    recent_ai = self.db.query(ChatMessage).filter(
+                        ChatMessage.session_id == message.session_id,
+                        ChatMessage.role == 'assistant'
+                    ).order_by(ChatMessage.created_at.desc()).first()
+                    
+                    if recent_ai:
+                        print(f"[DELETE] 找到最近的AI回复: {recent_ai.id}, 时间: {recent_ai.created_at}")
+                        # 如果AI回复的时间在用户消息时间的5分钟内，认为是对应的回复
+                        time_diff = abs((recent_ai.created_at - message.created_at).total_seconds())
+                        if time_diff <= 300:  # 5分钟内
+                            print(f"[DELETE] AI回复时间差在5分钟内({time_diff}秒)，认为是对应回复")
+                            messages_to_delete.append(recent_ai)
+                        else:
+                            print(f"[DELETE] AI回复时间差过大({time_diff}秒)，不删除")
+                    
+                    # 如果还是没找到，尝试更简单的策略：删除该会话中的最后一条AI消息
+                    if len(messages_to_delete) == 1:  # 只有用户消息
+                        print(f"[DELETE] 尝试删除该会话中的最后一条AI消息...")
+                        last_ai = self.db.query(ChatMessage).filter(
+                            ChatMessage.session_id == message.session_id,
+                            ChatMessage.role == 'assistant'
+                        ).order_by(ChatMessage.id.desc()).first()  # 按ID降序，获取最新的
+                        
+                        if last_ai:
+                            print(f"[DELETE] 找到最后一条AI消息: {last_ai.id}")
+                            messages_to_delete.append(last_ai)
             
-            # 删除相关的评估记录
-            self.db.query(ResponseEvaluation).filter(ResponseEvaluation.message_id == message_id).delete()
+            # 删除所有相关消息及其关联数据
+            total_deleted = 0
+            deleted_message_ids = []
             
-            # 删除消息本身
-            self.db.delete(message)
+            for msg_to_delete in messages_to_delete:
+                print(f"[DELETE] 删除消息: {msg_to_delete.id} ({msg_to_delete.role})")
+                
+                # 删除相关的情感分析记录
+                emotion_count = self.db.query(EmotionAnalysis).filter(EmotionAnalysis.message_id == msg_to_delete.id).count()
+                if emotion_count > 0:
+                    self.db.query(EmotionAnalysis).filter(EmotionAnalysis.message_id == msg_to_delete.id).delete()
+                    print(f"[DELETE] 删除了 {emotion_count} 条情感分析记录 (消息 {msg_to_delete.id})")
+                
+                # 删除相关的反馈记录
+                feedback_count = self.db.query(UserFeedback).filter(UserFeedback.message_id == msg_to_delete.id).count()
+                if feedback_count > 0:
+                    self.db.query(UserFeedback).filter(UserFeedback.message_id == msg_to_delete.id).delete()
+                    print(f"[DELETE] 删除了 {feedback_count} 条反馈记录 (消息 {msg_to_delete.id})")
+                
+                # 删除相关的评估记录
+                eval_count = self.db.query(ResponseEvaluation).filter(ResponseEvaluation.message_id == msg_to_delete.id).count()
+                if eval_count > 0:
+                    self.db.query(ResponseEvaluation).filter(ResponseEvaluation.message_id == msg_to_delete.id).delete()
+                    print(f"[DELETE] 删除了 {eval_count} 条评估记录 (消息 {msg_to_delete.id})")
+                
+                # 记录要删除的消息ID
+                deleted_message_ids.append(msg_to_delete.id)
+                
+                # 删除消息本身
+                self.db.delete(msg_to_delete)
+                total_deleted += 1
+            
             self.db.commit()
-            return True
+            print(f"[DELETE] 成功删除 {total_deleted} 条消息: {deleted_message_ids}")
+            return {
+                "success": True,
+                "deleted_count": total_deleted,
+                "deleted_messages": deleted_message_ids
+            }
+            
         except Exception as e:
             self.db.rollback()
-            print(f"删除消息失败: {e}")
-            return False
+            print(f"[DELETE] 删除消息失败: {e}")
+            import traceback
+            print(f"[DELETE] 错误堆栈: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     def create_session(self, session_id, user_id):
         """创建新会话"""

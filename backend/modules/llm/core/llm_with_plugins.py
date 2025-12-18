@@ -184,6 +184,7 @@ class EmotionalChatEngineWithPlugins:
         )
         
         # 保存助手消息
+        assistant_message_id = None
         try:
             db_manager = DatabaseManager()
             with db_manager as db:
@@ -194,6 +195,8 @@ class EmotionalChatEngineWithPlugins:
                     content=response_text,
                     emotion=emotion_data.get("emotion", "neutral")
                 )
+                assistant_message_id = assistant_message.id
+                print(f"AI消息已保存，ID: {assistant_message_id}")
         except Exception as e:
             print(f"保存消息失败: {e}")
             import traceback
@@ -215,6 +218,7 @@ class EmotionalChatEngineWithPlugins:
             response=response_text,
             session_id=session_id,
             message_id=user_message_id,
+            ai_message_id=assistant_message_id,  # 添加AI消息ID
             emotion=emotion_data["emotion"],
             suggestions=emotion_data.get("suggestions", [])[:3],
             plugin_used=plugin_used,

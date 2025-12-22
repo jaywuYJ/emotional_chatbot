@@ -245,8 +245,8 @@ class ChatService:
         if self.rag_enabled and self.rag_service:
             try:
                 print("ChatService尝试使用RAG增强")
-                # 获取对话历史
-                conversation_history = await self._get_conversation_history(session_id)
+                # 获取对话历史 - 增加历史长度以包含更多上下文
+                conversation_history = await self._get_conversation_history(session_id, limit=15)
                 
                 # 尝试RAG增强
                 rag_result = self.rag_service.enhance_response(
@@ -305,7 +305,15 @@ class ChatService:
             # 使用常规引擎回复
             print(f"ChatService使用常规引擎: session_id={session_id}, user_id={user_id}")
             try:
-                response = self.chat_engine.chat(request)
+                # 将构建好的上下文信息传递给LLM引擎
+                enhanced_request = ChatRequest(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    context=context,  # 传递构建好的上下文
+                    deep_thinking=request.deep_thinking or False
+                )
+                response = self.chat_engine.chat(enhanced_request)
                 print(f"ChatService常规引擎回复完成: {response.session_id}")
             except Exception as e:
                 print(f"ChatService常规引擎调用失败: {e}")
@@ -397,7 +405,7 @@ class ChatService:
         
         return response
     
-    async def _get_conversation_history(self, session_id: str, limit: int = 5) -> List[Dict[str, str]]:
+    async def _get_conversation_history(self, session_id: str, limit: int = 15) -> List[Dict[str, str]]:
         """
         获取最近的对话历史（用于RAG上下文）
         

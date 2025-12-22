@@ -170,6 +170,10 @@ class EmotionalChatEngineWithPlugins:
         plugin_used = None
         plugin_result = None
         
+        # 检查是否有传递过来的上下文信息
+        context_info = request.context if hasattr(request, 'context') and request.context else {}
+        print(f"[CHAT] 接收到上下文信息: {len(context_info)} 个字段")
+        
         response_text = self._generate_response_with_plugins(
             request.message, 
             session_id,
@@ -180,7 +184,8 @@ class EmotionalChatEngineWithPlugins:
             },
             plugin_used_ref=[plugin_used],
             plugin_result_ref=[plugin_result],
-            deep_thinking=request.deep_thinking or False
+            deep_thinking=request.deep_thinking or False,
+            context_info=context_info  # 传递上下文信息
         )
         
         # 保存助手消息
@@ -332,7 +337,8 @@ class EmotionalChatEngineWithPlugins:
                                        emotion_state: Optional[Dict] = None,
                                        plugin_used_ref: List = None, 
                                        plugin_result_ref: List = None,
-                                       deep_thinking: bool = False):
+                                       deep_thinking: bool = False,
+                                       context_info: Optional[Dict] = None):
         """
         使用 Function Calling 生成回应
         如果模型决定调用插件，则执行插件并基于结果生成最终回复
@@ -384,6 +390,15 @@ class EmotionalChatEngineWithPlugins:
         print(f"[DEBUG] 意图检测 - 天气: location={weather_location}, 节假日: info={holiday_info}")
         
         # 构建消息 - 让大模型自己判断是否需要调用工具
+        # 首先获取对话历史以提供更好的上下文
+        db_manager = DatabaseManager()
+        with db_manager as db:
+            recent_messages = db.get_session_messages(session_id, limit=30)  # 增加到30条
+            history_text = ""
+            # 使用最近12条消息提供充分的上下文
+            for msg in reversed(recent_messages[-12:]):
+                history_text += "{}: {}\n".format('用户' if msg.role == 'user' else '心语', msg.content)
+        
         tools_description = "\n\n【工具使用说明】当用户需要实时信息时，你可以调用以下工具获取数据：\n"
         for func in functions:
             tools_description += f"- {func.get('name', 'unknown')}: {func.get('description', '')}\n"
@@ -399,12 +414,31 @@ class EmotionalChatEngineWithPlugins:
             {
                 "role": "system",
                 "content": system_prompt + tools_description
-            },
-            {
-                "role": "user",
-                "content": user_input
             }
         ]
+        
+        # 添加历史对话上下文
+        if history_text.strip():
+            messages.append({
+                "role": "system", 
+                "content": f"对话历史：\n{history_text.strip()}"
+            })
+        
+        # 添加从ChatService传递过来的上下文信息
+        if context_info:
+            context_summary = self._format_context_info(context_info)
+            if context_summary:
+                messages.append({
+                    "role": "system",
+                    "content": f"用户上下文信息：\n{context_summary}"
+                })
+                print(f"[DEBUG] 添加了上下文信息: {len(context_summary)} 字符")
+        
+        # 添加当前用户输入
+        messages.append({
+            "role": "user",
+            "content": user_input
+        })
         
         # 第一次调用：让模型决定是否需要调用工具
         try:
@@ -725,6 +759,53 @@ class EmotionalChatEngineWithPlugins:
         
         return json.dumps(result, ensure_ascii=False)
     
+    def _format_context_info(self, context_info: Dict[str, Any]) -> str:
+        """格式化上下文信息为可读的文本"""
+        if not context_info:
+            return ""
+        
+        context_parts = []
+        
+        # 用户画像信息
+        user_profile = context_info.get('user_profile', {})
+        if user_profile and user_profile.get('summary'):
+            context_parts.append(f"用户画像: {user_profile['summary']}")
+        
+        # 记忆信息
+        memories = context_info.get('memories', {})
+        if memories:
+            all_memories = memories.get('all', [])
+            if all_memories:
+                memory_summaries = []
+                for memory in all_memories[:5]:  # 只取前5个最重要的记忆
+                    if isinstance(memory, dict):
+                        content = memory.get('content', '')
+                        memory_type = memory.get('memory_type', '')
+                        if content:
+                            memory_summaries.append(f"[{memory_type}] {content}")
+                    elif isinstance(memory, str):
+                        memory_summaries.append(memory)
+                
+                if memory_summaries:
+                    context_parts.append(f"相关记忆:\n" + "\n".join(memory_summaries))
+        
+        # 情感趋势
+        emotion_context = context_info.get('emotion_context', {})
+        if emotion_context:
+            trend = emotion_context.get('trend', {})
+            if trend and trend.get('trend'):
+                context_parts.append(f"情感趋势: {trend['trend']}")
+        
+        # 意图信息
+        intent = context_info.get('intent')
+        if intent and isinstance(intent, dict):
+            intent_name = intent.get('intent', '')
+            confidence = intent.get('confidence', 0)
+            if intent_name and confidence > 0.5:
+                context_parts.append(f"用户意图: {intent_name} (置信度: {confidence:.2f})")
+        
+        return "\n".join(context_parts)
+    
     def _generate_response_from_plugin_result(self, plugin_name: str, result: Dict[str, Any], user_input: str) -> str:
         """基于插件结果手动生成回复"""
         if "error" in result:
@@ -796,12 +877,13 @@ class EmotionalChatEngineWithPlugins:
                         emotion_state: Optional[Dict] = None,
                         deep_thinking: bool = False) -> str:
         """不使用插件的普通聊天"""
-        # 获取历史
+        # 获取历史 - 增加历史对话长度以包含更多上下文
         db_manager = DatabaseManager()
         with db_manager as db:
-            recent_messages = db.get_session_messages(session_id, limit=10)
+            recent_messages = db.get_session_messages(session_id, limit=30)  # 增加到30条
             history_text = ""
-            for msg in reversed(recent_messages[-5:]):
+            # 使用最近12条消息而不是10条，确保包含更多上下文
+            for msg in reversed(recent_messages[-12:]):
                 history_text += "{}: {}\n".format('用户' if msg.role == 'user' else '心语', msg.content)
         
         # 获取个性化系统Prompt

@@ -1,117 +1,93 @@
-.PHONY: help db-init db-upgrade db-downgrade db-check db-current db-history db-reset install install-uv run quick-start rag-init rag-test rag-demo uv-sync uv-lock
+# Emotional Chat 项目 Makefile
 
-# 获取 Makefile 所在目录作为项目根目录
-# 使用 abspath 确保兼容性，适用于 GNU Make 3.81+
-# 去掉尾部斜杠
-ROOT_DIR := $(patsubst %/,%,$(dir $(abspath $(firstword $(MAKEFILE_LIST)))))
+.PHONY: help test quick-test unit-test integration-test e2e-test clean setup lint format
 
-# 检测是否安装了 uv
-UV := $(shell command -v uv 2> /dev/null)
-
+# 默认目标
 help:
-	@echo "可用的命令:"
-	@echo ""
-	@echo "基础命令:"
-	@echo "  make install      - 安装依赖（使用 pip）"
-	@echo "  make install-uv   - 安装依赖（使用 uv，推荐，更快）"
-	@echo "  make run          - 运行后端服务（自动构建知识库和RAG）"
-	@echo "  make quick-start  - 快速启动（推荐，可选）"
-	@echo ""
-	@echo "uv 命令（推荐）:"
-	@echo "  make uv-sync      - 同步依赖（从 pyproject.toml 安装）"
-	@echo "  make uv-lock      - 生成 uv.lock 锁定文件"
-	@echo ""
-	@echo "数据库命令:"
-	@echo "  make db-init      - 初始化数据库"
-	@echo "  make db-upgrade   - 升级数据库到最新版本"
-	@echo "  make db-downgrade - 降级数据库一个版本"
-	@echo "  make db-check     - 检查数据库连接"
-	@echo "  make db-current   - 查看当前数据库版本"
-	@echo "  make db-history   - 查看迁移历史"
-	@echo "  make db-reset     - 重置数据库（危险！）"
-	@echo ""
-	@echo "RAG知识库命令:"
-	@echo "  make rag-init     - 初始化RAG知识库"
-	@echo "  make rag-test     - 测试RAG系统"
-	@echo "  make rag-demo     - 演示RAG效果"
+	@echo "可用命令:"
+	@echo "  make test          - 运行完整回归测试"
+	@echo "  make quick-test    - 运行快速测试（提交前验证）"
+	@echo "  make unit-test     - 只运行单元测试"
+	@echo "  make integration-test - 只运行集成测试"
+	@echo "  make e2e-test      - 只运行端到端测试"
+	@echo "  make clean         - 清理测试文件和缓存"
+	@echo "  make setup         - 设置开发环境"
+	@echo "  make lint          - 代码检查"
+	@echo "  make format        - 代码格式化"
 
-# 传统 pip 安装方式（兼容性保留）
-install:
-	@echo "📦 安装 Python 依赖..."
-	cd $(ROOT_DIR) && pip install -r requirements.txt
-	@echo ""
-	@echo "💡 提示: pysqlite3-binary 是可选的（已从 requirements.txt 中移除）"
-	@echo "   如果遇到 SQLite3 兼容性问题，可以尝试: pip install pysqlite3-binary"
-	@echo "   如果安装失败，代码会自动使用内置 sqlite3，不影响使用"
+# 运行完整回归测试
+test:
+	@echo "运行完整回归测试..."
+	python run_tests.py --verbose
 
-# uv 安装方式（推荐，更快）
-install-uv:
-	@if [ -z "$(UV)" ]; then \
-		echo "⚠️  uv 未安装，正在安装..."; \
-		curl -LsSf https://astral.sh/uv/install.sh | sh; \
-		echo "✅ uv 安装完成，请重新运行 make install-uv"; \
+# 运行快速测试
+quick-test:
+	@echo "运行快速测试..."
+	python quick_test.py
+
+# 运行单元测试
+unit-test:
+	@echo "运行单元测试..."
+	python run_tests.py --type unit --verbose
+
+# 运行集成测试
+integration-test:
+	@echo "运行集成测试..."
+	python run_tests.py --type integration --verbose
+
+# 运行端到端测试
+e2e-test:
+	@echo "运行端到端测试..."
+	python run_tests.py --type e2e --verbose
+
+# 跳过外部 API 的测试
+test-offline:
+	@echo "运行离线测试（跳过外部 API）..."
+	python run_tests.py --skip-external-apis --verbose
+
+# 清理测试文件和缓存
+clean:
+	@echo "清理测试文件和缓存..."
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+	rm -rf .pytest_cache 2>/dev/null || true
+	rm -rf test_*.db test_*.json test_*chroma_db* 2>/dev/null || true
+	rm -rf ./tests/fixtures/test_* 2>/dev/null || true
+	@echo "清理完成"
+
+# 设置开发环境
+setup:
+	@echo "设置开发环境..."
+	pip install -r requirements.txt
+	@echo "创建测试目录..."
+	mkdir -p tests/{unit,integration,e2e,fixtures}
+	@echo "环境设置完成"
+
+# 代码检查（如果安装了 flake8）
+lint:
+	@echo "运行代码检查..."
+	@if command -v flake8 >/dev/null 2>&1; then \
+		flake8 backend/ --max-line-length=120 --ignore=E501,W503; \
 	else \
-		echo "✅ 使用 uv 安装依赖..."; \
-		cd $(ROOT_DIR) && uv sync; \
+		echo "flake8 未安装，跳过代码检查"; \
 	fi
 
-# uv 同步依赖（从 pyproject.toml）
-uv-sync:
-	@if [ -z "$(UV)" ]; then \
-		echo "❌ 错误: uv 未安装"; \
-		echo "安装方法: curl -LsSf https://astral.sh/uv/install.sh | sh"; \
-		exit 1; \
+# 代码格式化（如果安装了 black）
+format:
+	@echo "格式化代码..."
+	@if command -v black >/dev/null 2>&1; then \
+		black backend/ --line-length=120; \
+	else \
+		echo "black 未安装，跳过代码格式化"; \
 	fi
-	cd $(ROOT_DIR) && uv sync
 
-# uv 生成锁定文件
-uv-lock:
-	@if [ -z "$(UV)" ]; then \
-		echo "❌ 错误: uv 未安装"; \
-		echo "安装方法: curl -LsSf https://astral.sh/uv/install.sh | sh"; \
-		exit 1; \
-	fi
-	cd $(ROOT_DIR) && uv lock
+# 提交前检查
+pre-commit: clean quick-test
+	@echo "提交前检查完成"
 
-db-init:
-	cd $(ROOT_DIR) && python db_manager.py init
-
-db-upgrade:
-	cd $(ROOT_DIR) && python db_manager.py upgrade
-
-db-downgrade:
-	cd $(ROOT_DIR) && python db_manager.py downgrade
-
-db-check:
-	cd $(ROOT_DIR) && python db_manager.py check
-
-db-current:
-	cd $(ROOT_DIR) && python db_manager.py current
-
-db-history:
-	cd $(ROOT_DIR) && python db_manager.py history
-
-db-reset:
-	cd $(ROOT_DIR) && python db_manager.py reset
-
-run:
-	cd $(ROOT_DIR) && python run_backend.py
-
-quick-start:
-	cd $(ROOT_DIR) && python quick_start.py
-
-rag-init:
-	cd $(ROOT_DIR) && python init_rag_knowledge.py
-
-rag-test:
-	@echo "测试RAG系统..."
-	@echo "检查RAG API端点: http://localhost:8000/api/rag/test"
-	@curl -s http://localhost:8000/api/rag/test || echo "⚠️  请确保后端服务正在运行 (make run)"
-
-rag-demo:
-	@echo "演示RAG效果对比..."
-	@echo "测试问题: 失眠怎么办？"
-	@curl -s -X POST http://localhost:8000/api/rag/ask \
-		-H "Content-Type: application/json" \
-		-d '{"question": "失眠怎么办？"}' || echo "⚠️  请确保后端服务正在运行 (make run)"
-
+# 安装开发依赖
+install-dev:
+	@echo "安装开发依赖..."
+	pip install flake8 black pytest pytest-asyncio pytest-cov
+	@echo "开发依赖安装完成"

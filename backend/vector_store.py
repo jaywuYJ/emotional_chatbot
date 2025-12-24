@@ -47,31 +47,47 @@ class VectorStore:
             path=db_path,
             settings=settings
         )
-        # 不使用自定义嵌入器，使用ChromaDB默认的嵌入函数
-        self.embedder = None  # ChromaDB会自动使用默认嵌入
         
-        # 使用默认嵌入函数，设置较长的超时时间
-        from chromadb.utils import embedding_functions
-        # 创建默认嵌入函数，增加超时时间
-        default_ef = embedding_functions.DefaultEmbeddingFunction()
+        # 尝试使用自定义embedding服务
+        self.use_custom_embedding = False
+        try:
+            from backend.services.embedding_service import get_embedding_service
+            self.embedding_service = get_embedding_service()
+            if self.embedding_service.is_available():
+                self.use_custom_embedding = True
+                logger.info(f"✓ 使用自定义embedding服务: {self.embedding_service.get_info()}")
+            else:
+                logger.info("⚠ 自定义embedding服务不可用，使用ChromaDB默认embedding")
+        except Exception as e:
+            logger.warning(f"初始化自定义embedding服务失败: {e}")
+            self.embedding_service = None
         
-        # 创建集合，使用自定义嵌入函数
+        # 创建embedding函数
+        if self.use_custom_embedding:
+            # 使用自定义embedding函数
+            embedding_function = CustomEmbeddingFunction(self.embedding_service)
+        else:
+            # 使用ChromaDB默认embedding函数
+            from chromadb.utils import embedding_functions
+            embedding_function = embedding_functions.DefaultEmbeddingFunction()
+        
+        # 创建集合
         try:
             self.conversation_collection = self.client.get_or_create_collection(
                 name="conversations",
-                embedding_function=default_ef,
+                embedding_function=embedding_function,
                 metadata={"hnsw:space": "cosine"}
             )
             
             self.knowledge_collection = self.client.get_or_create_collection(
                 name="knowledge",
-                embedding_function=default_ef,
+                embedding_function=embedding_function,
                 metadata={"hnsw:space": "cosine"}
             )
             
             self.emotion_collection = self.client.get_or_create_collection(
                 name="emotions",
-                embedding_function=default_ef,
+                embedding_function=embedding_function,
                 metadata={"hnsw:space": "cosine"}
             )
         except Exception as e:
@@ -81,6 +97,30 @@ class VectorStore:
                 shutil.rmtree(db_path)
                 logger.info(f"已删除数据库目录，请重新启动服务: {db_path}")
             raise
+
+
+class CustomEmbeddingFunction:
+    """自定义embedding函数，使用我们的embedding服务"""
+    
+    def __init__(self, embedding_service):
+        self.embedding_service = embedding_service
+    
+    def __call__(self, input: List[str]) -> List[List[float]]:
+        """
+        ChromaDB调用的embedding函数
+        
+        Args:
+            input: 要获取embedding的文本列表
+            
+        Returns:
+            embedding向量列表
+        """
+        try:
+            return self.embedding_service.get_embeddings(input)
+        except Exception as e:
+            logger.error(f"自定义embedding函数调用失败: {e}")
+            # 如果失败，返回零向量作为fallback
+            return [[0.0] * 1024 for _ in input]  # 假设1024维向量
     
     def add_conversation(self, session_id: str, message: str, response: str, emotion: str = None):
         """存储对话记录"""

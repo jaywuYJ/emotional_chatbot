@@ -49,4 +49,21 @@ log/
 *.db
 *.sqlite3
 chroma_db/
+test_rag_chroma_db/
 
+# misc
+**/._*
+
+# 测试文件
+test_*.json
+test_*.db
+test_*chroma_db*
+test_report.json
+exported_rag_config.json
+
+# 向量数据库扩展
+*.chroma_db/
+
+# 临时文件
+*.tmp
+*.temp

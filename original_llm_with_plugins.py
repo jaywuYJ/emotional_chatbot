@@ -9,10 +9,6 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import requests
 
-# 导入新的LLM路由器
-from backend.modules.llm.llm_router import LLMRouter
-from backend.modules.llm.providers.base_provider import LLMMessage, LLMResponse
-
 # 导入 LangChain (Python 3.10+, langchain 0.2.x+)
 try:
     from langchain_openai import ChatOpenAI
@@ -48,22 +44,14 @@ class EmotionalChatEngineWithPlugins:
     """
     
     def __init__(self):
-        # 初始化LLM路由器（优先使用）
-        try:
-            self.llm_router = LLMRouter()
-            provider_info = self.llm_router.get_current_provider_info()
-            print(f"✓ LLM路由器初始化成功，当前提供商: {provider_info['name']} ({provider_info.get('model', 'unknown')})")
-        except Exception as e:
-            print(f"⚠ LLM路由器初始化失败: {e}")
-            self.llm_router = None
-        
-        # 初始化API配置（作为备用）
+        # 初始化API配置
         self.api_key = os.getenv("LLM_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.api_base_url = os.getenv("LLM_BASE_URL") or os.getenv("API_BASE_URL", "https://api.openai.com/v1")
         self.model = os.getenv("DEFAULT_MODEL", "qwen-plus")
         
-        if not self.api_key and not self.llm_router:
-            print("警告: 既没有LLM路由器也没有API_KEY，将使用本地fallback模式")
+        if not self.api_key:
+            print("警告: API_KEY 未设置，将使用本地fallback模式")
+            self.api_key = None
         
         # 创建数据库表
         create_tables()
@@ -100,8 +88,8 @@ class EmotionalChatEngineWithPlugins:
             print(f"警告: 个性化服务初始化失败: {e}")
             self.personalization_service = None
         
-        # 初始化 LangChain LLM（作为备用）
-        if self.api_key and LANGCHAIN_AVAILABLE and not self.llm_router:
+        # 初始化 LLM
+        if self.api_key and LANGCHAIN_AVAILABLE:
             try:
                 self.llm = ChatOpenAI(
                     model=self.model,
@@ -123,7 +111,7 @@ class EmotionalChatEngineWithPlugins:
                 self.prompt = ChatPromptTemplate.from_template(self.template)
                 self.output_parser = StrOutputParser()
                 self.chain = self.prompt | self.llm | self.output_parser
-                print("✓ LangChain LCEL 链初始化成功（备用）")
+                print("✓ LangChain LCEL 链初始化成功")
             except Exception as e:
                 print(f"警告: LangChain 初始化失败: {e}")
                 self.llm = None
@@ -344,27 +332,6 @@ class EmotionalChatEngineWithPlugins:
         # 如果只是提到出游但没有具体日期，返回今天（让用户知道今天是否适合出游）
         return {"date": None, "year": None}
     
-    def _detect_news_intent(self, user_input: str) -> Optional[Dict[str, str]]:
-        """检测用户是否在询问新闻"""
-        news_keywords = ["新闻", "资讯", "消息", "头条", "热点", "最新", "news"]
-        category_keywords = {
-            "technology": ["科技", "技术", "AI", "人工智能", "互联网"],
-            "health": ["健康", "医疗", "养生", "疾病"],
-            "entertainment": ["娱乐", "明星", "电影", "音乐"],
-            "science": ["科学", "研究", "发现"]
-        }
-        
-        has_news_keyword = any(keyword in user_input for keyword in news_keywords)
-        if not has_news_keyword:
-            return None
-        
-        # 检测新闻类别
-        for category, keywords in category_keywords.items():
-            if any(keyword in user_input for keyword in keywords):
-                return {"category": category}
-        
-        return {"category": "general"}
-    
     def _generate_response_with_plugins(self, user_input: str, session_id: str, 
                                        user_id: str = "anonymous",
                                        emotion_state: Optional[Dict] = None,
@@ -374,7 +341,7 @@ class EmotionalChatEngineWithPlugins:
                                        context_info: Optional[Dict] = None):
         """
         使用 Function Calling 生成回应
-        优先使用LLM路由器，如果不可用则回退到原来的实现
+        如果模型决定调用插件，则执行插件并基于结果生成最终回复
         """
         print(f"\n{'='*60}")
         print(f"[DEBUG] _generate_response_with_plugins 被调用")
@@ -382,14 +349,6 @@ class EmotionalChatEngineWithPlugins:
         print(f"[DEBUG] session_id: {session_id}")
         print(f"{'='*60}\n")
         
-        # 优先使用LLM路由器
-        if self.llm_router and self.llm_router.current_provider:
-            return self._generate_response_with_router(
-                user_input, session_id, user_id, emotion_state,
-                plugin_used_ref, plugin_result_ref, deep_thinking, context_info
-            )
-        
-        # 回退到原来的实现
         if not self.api_key:
             print("[WARNING] API_KEY 未设置，使用fallback响应")
             return self._get_fallback_response(user_input)
@@ -719,142 +678,6 @@ class EmotionalChatEngineWithPlugins:
             traceback.print_exc()
             return self._get_fallback_response(user_input)
     
-    def _generate_response_with_router(self, user_input: str, session_id: str, 
-                                     user_id: str = "anonymous",
-                                     emotion_state: Optional[Dict] = None,
-                                     plugin_used_ref: List = None, 
-                                     plugin_result_ref: List = None,
-                                     deep_thinking: bool = False,
-                                     context_info: Optional[Dict] = None) -> str:
-        """
-        使用LLM路由器生成回应（简化版本，暂不支持Function Calling）
-        """
-        print(f"[ROUTER] 使用LLM路由器生成回应")
-        
-        # 获取个性化系统Prompt
-        system_prompt = self._get_personalized_system_prompt(user_id, user_input, emotion_state)
-        
-        # 深度思考模式
-        if deep_thinking:
-            deep_thinking_instruction = """
-            
-【深度思考模式已启用】
-请对用户的输入进行更深入的思考和分析：
-1. 仔细分析用户问题的核心和潜在意图
-2. 考虑多个角度和可能性
-3. 提供更全面、更有深度的回答
-4. 如果涉及情感问题，请进行更深入的情感理解和共情
-5. 考虑回答的长远影响和不同场景下的适用性
-
-请给出经过深入思考的回应。"""
-            system_prompt += deep_thinking_instruction
-            print("[ROUTER] 深度思考模式已启用")
-        
-        # 检测用户意图并调用插件
-        weather_location = self._detect_weather_intent(user_input)
-        holiday_info = self._detect_holiday_intent(user_input)
-        news_intent = self._detect_news_intent(user_input)
-        
-        print(f"[ROUTER] 意图检测 - 天气: {weather_location}, 节假日: {holiday_info}, 新闻: {news_intent}")
-        
-        # 如果检测到需要插件，先调用插件获取信息
-        plugin_result = None
-        plugin_name = None
-        
-        if weather_location:
-            print(f"[ROUTER] 检测到天气查询需求: {weather_location}")
-            try:
-                plugin_result = self.plugin_manager.execute_plugin("get_weather", location=weather_location)
-                plugin_name = "get_weather"
-                if plugin_used_ref:
-                    plugin_used_ref[0] = plugin_name
-                if plugin_result_ref:
-                    plugin_result_ref[0] = plugin_result
-            except Exception as e:
-                print(f"[ROUTER] 天气插件调用失败: {e}")
-        
-        elif holiday_info:
-            print(f"[ROUTER] 检测到节假日查询需求: {holiday_info}")
-            try:
-                if holiday_info.get("date"):
-                    plugin_result = self.plugin_manager.execute_plugin("get_holiday_info", date=holiday_info["date"])
-                elif holiday_info.get("year"):
-                    plugin_result = self.plugin_manager.execute_plugin("get_holiday_info", year=holiday_info["year"])
-                else:
-                    plugin_result = self.plugin_manager.execute_plugin("get_holiday_info")
-                plugin_name = "get_holiday_info"
-                if plugin_used_ref:
-                    plugin_used_ref[0] = plugin_name
-                if plugin_result_ref:
-                    plugin_result_ref[0] = plugin_result
-            except Exception as e:
-                print(f"[ROUTER] 节假日插件调用失败: {e}")
-        
-        elif news_intent:
-            print(f"[ROUTER] 检测到新闻查询需求: {news_intent}")
-            try:
-                plugin_result = self.plugin_manager.execute_plugin("get_latest_news", category=news_intent.get("category", "general"))
-                plugin_name = "get_latest_news"
-                if plugin_used_ref:
-                    plugin_used_ref[0] = plugin_name
-                if plugin_result_ref:
-                    plugin_result_ref[0] = plugin_result
-            except Exception as e:
-                print(f"[ROUTER] 新闻插件调用失败: {e}")
-        
-        # 获取历史对话
-        db_manager = DatabaseManager()
-        with db_manager as db:
-            recent_messages = db.get_session_messages(session_id, limit=30)
-            history_text = ""
-            for msg in reversed(recent_messages[-12:]):
-                history_text += "{}: {}\n".format('用户' if msg.role == 'user' else '心语', msg.content)
-        
-        # 构建消息列表
-        messages = [LLMMessage(role="system", content=system_prompt)]
-        
-        # 添加历史对话
-        if history_text:
-            messages.append(LLMMessage(role="system", content=f"对话历史：\n{history_text}"))
-        
-        # 添加上下文信息
-        if context_info:
-            context_summary = self._format_context_info(context_info)
-            if context_summary:
-                messages.append(LLMMessage(role="system", content=f"用户上下文信息：\n{context_summary}"))
-        
-        # 如果有插件结果，添加到系统消息中
-        if plugin_result and plugin_name:
-            plugin_info = self._format_plugin_result(plugin_name, plugin_result)
-            messages.append(LLMMessage(role="system", content=f"实时信息：\n{plugin_info}"))
-            print(f"[ROUTER] 已添加插件结果到上下文")
-        
-        # 添加用户输入
-        messages.append(LLMMessage(role="user", content=user_input))
-        
-        try:
-            # 根据深度思考模式调整参数
-            temperature = 0.5 if deep_thinking else 0.7
-            max_tokens = 2000 if deep_thinking else 1000
-            
-            response = self.llm_router.chat_completion(
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            
-            # 如果使用了插件，在回复中体现实时信息
-            if plugin_result and plugin_name:
-                print(f"[ROUTER] 基于 {plugin_name} 插件结果生成回复")
-            
-            return response.content
-        except Exception as e:
-            print(f"[ROUTER] LLM调用失败: {e}")
-            # 如果有插件结果，尝试基于插件结果生成简单回复
-            if plugin_result and plugin_name:
-                return self._generate_response_from_plugin_result(plugin_name, plugin_result, user_input)
-            return self._get_fallback_response(user_input)
-    
     def _format_plugin_result(self, plugin_name: str, result: Dict[str, Any]) -> str:
         """格式化插件结果"""
         if plugin_name == "get_weather":
@@ -1046,196 +869,6 @@ class EmotionalChatEngineWithPlugins:
             
             news_text = "\n".join(news_list)
             return f"我为你找到了{len(articles)}条{category_cn}新闻：\n\n{news_text}\n\n你对哪条新闻感兴趣，想了解更多吗？"
-        
-        return "我已经为你查询了相关信息，有什么想聊的吗？"
-    
-    def _call_llm_normal(self, user_input: str, session_id: str, 
-                        user_id: str = "anonymous", 
-                        emotion_state: Optional[Dict] = None,
-                        deep_thinking: bool = False) -> str:
-        """不使用插件的普通聊天"""
-        # 获取历史 - 增加历史对话长度以包含更多上下文
-        db_manager = DatabaseManager()
-        with db_manager as db:
-            recent_messages = db.get_session_messages(session_id, limit=30)  # 增加到30条
-            history_text = ""
-            # 使用最近12条消息而不是10条，确保包含更多上下文
-            for msg in reversed(recent_messages[-12:]):
-                history_text += "{}: {}\n".format('用户' if msg.role == 'user' else '心语', msg.content)
-        
-        # 获取个性化系统Prompt
-        system_prompt = self._get_personalized_system_prompt(user_id, user_input, emotion_state)
-        
-        # 深度思考模式：在系统提示中添加深度思考指导
-        if deep_thinking:
-            deep_thinking_instruction = """
-            
-【深度思考模式已启用】
-请对用户的输入进行更深入的思考和分析：
-1. 仔细分析用户问题的核心和潜在意图
-2. 考虑多个角度和可能性
-3. 提供更全面、更有深度的回答
-4. 如果涉及情感问题，请进行更深入的情感理解和共情
-5. 考虑回答的长远影响和不同场景下的适用性
-
-请给出经过深入思考的回应。"""
-            system_prompt += deep_thinking_instruction
-        
-        # 根据深度思考模式调整temperature和max_tokens
-        temperature = 0.5 if deep_thinking else 0.7  # 深度思考时降低temperature，使回答更稳定
-        max_tokens = 2000 if deep_thinking else 1000  # 深度思考时允许更长的回答
-        
-        # 构建完整Prompt（包含历史对话）
-        if history_text:
-            full_prompt = f"{system_prompt}\n\n对话历史：\n{history_text}\n\n用户：{user_input}\n心语："
-        else:
-            full_prompt = f"{system_prompt}\n\n用户：{user_input}\n心语："
-        
-        try:
-            api_url = f"{self.api_base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            data = {
-                "model": self.model,
-                "messages": [{"role": "system", "content": full_prompt}],
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            
-            response = requests.post(api_url, headers=headers, json=data, timeout=30)
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result["choices"][0]["message"]["content"].strip()
-            else:
-                return self._get_fallback_response(user_input)
-        except Exception as e:
-            print(f"LLM调用失败: {e}")
-            return self._get_fallback_response(user_input)
-    
-    def _format_context_info(self, context_info: Dict[str, Any]) -> str:
-        """格式化上下文信息为可读的文本"""
-        if not context_info:
-            return ""
-        
-        context_parts = []
-        
-        # 用户画像信息
-        user_profile = context_info.get('user_profile', {})
-        if user_profile and user_profile.get('summary'):
-            context_parts.append(f"用户画像: {user_profile['summary']}")
-        
-        # 记忆信息
-        memories = context_info.get('memories', {})
-        if memories:
-            all_memories = memories.get('all', [])
-            if all_memories:
-                memory_summaries = []
-                for memory in all_memories[:5]:  # 只取前5个最重要的记忆
-                    if isinstance(memory, dict):
-                        content = memory.get('content', '')
-                        memory_type = memory.get('memory_type', '')
-                        if content:
-                            memory_summaries.append(f"[{memory_type}] {content}")
-                    elif isinstance(memory, str):
-                        memory_summaries.append(memory)
-                
-                if memory_summaries:
-                    context_parts.append(f"相关记忆:\n" + "\n".join(memory_summaries))
-        
-        # 情感趋势
-        emotion_context = context_info.get('emotion_context', {})
-        if emotion_context:
-            trend = emotion_context.get('trend', {})
-            if trend and trend.get('trend'):
-                context_parts.append(f"情感趋势: {trend['trend']}")
-        
-        # 意图信息
-        intent = context_info.get('intent')
-        if intent and isinstance(intent, dict):
-            intent_name = intent.get('intent', '')
-            confidence = intent.get('confidence', 0)
-            if intent_name and confidence > 0.5:
-                context_parts.append(f"用户意图: {intent_name} (置信度: {confidence:.2f})")
-        
-        return "\n".join(context_parts)
-    
-    def _generate_response_from_plugin_result(self, plugin_name: str, result: Dict[str, Any], user_input: str) -> str:
-        """基于插件结果手动生成回复"""
-        if "error" in result:
-            error_msg = result['error']
-            # 如果是API密钥未配置，给出更友好的提示
-            if "API密钥" in error_msg or "未配置" in error_msg:
-                return "我暂时无法获取实时天气信息，因为天气服务还没有配置好。不过无论天气如何，都希望你能找到让自己舒服的状态。你今天有什么特别的安排吗？"
-            else:
-                return f"很抱歉，{error_msg}。不过我还是想陪伴你，有什么想聊的吗？"
-        
-        if plugin_name == "get_weather":
-            location = result.get('location', '该地')
-            description = result.get('description', '晴朗')
-            temperature = result.get('temperature', 20)
-            humidity = result.get('humidity', 0)
-            feels_like = result.get('feels_like', temperature)
-            
-            # 生成更自然的回复
-            reply = f"我帮你查了{location}的天气，{description}，温度{temperature}℃"
-            if feels_like != temperature:
-                reply += f"，体感温度{feels_like}℃"
-            if humidity:
-                reply += f"，湿度{humidity}%"
-            reply += "。"
-            
-            # 根据天气给出建议
-            if "晴" in description or "sunny" in description.lower():
-                reply += "很舒适的天气呢，适合出门走走~"
-            elif "雨" in description or "rain" in description.lower():
-                reply += "记得带伞哦，照顾好自己。"
-            elif "阴" in description or "cloudy" in description.lower():
-                reply += "天气有点阴沉，但心情可以保持晴朗呢。"
-            else:
-                reply += "无论天气如何，都希望你能找到让自己舒服的状态。"
-            
-            return reply
-        
-        elif plugin_name == "get_latest_news":
-            articles = result.get('articles', [])
-            if not articles:
-                return "很抱歉，暂时没有找到相关新闻。不过我可以陪你聊聊其他话题，有什么想说的吗？"
-            
-            category = result.get('category', '综合')
-            category_cn = {
-                "general": "综合",
-                "technology": "科技",
-                "health": "健康",
-                "entertainment": "娱乐",
-                "science": "科学"
-            }.get(category, category)
-            
-            news_list = []
-            for i, article in enumerate(articles[:3], 1):
-                title = article.get('title', '无标题')
-                description = article.get('description', '')
-                if description:
-                    desc = description[:80] + "..." if len(description) > 80 else description
-                    news_list.append(f"{i}. {title} - {desc}")
-                else:
-                    news_list.append(f"{i}. {title}")
-            
-            news_text = "\n".join(news_list)
-            return f"我为你找到了{len(articles)}条{category_cn}新闻：\n\n{news_text}\n\n你对哪条新闻感兴趣，想了解更多吗？"
-        
-        elif plugin_name == "get_holiday_info":
-            date_str = result.get('date', '该日期')
-            is_holiday = result.get('is_holiday', False)
-            holiday_name = result.get('holiday_name', '')
-            
-            if is_holiday:
-                return f"{date_str}是{holiday_name}，是节假日哦！很适合出游放松呢。你有什么出行计划吗？"
-            else:
-                return f"{date_str}是工作日，不过周末也可以安排出游呀。你想去哪里玩呢？"
         
         return "我已经为你查询了相关信息，有什么想聊的吗？"
     

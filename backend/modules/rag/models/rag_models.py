@@ -134,7 +134,11 @@ class RAGConfig(BaseModel):
         "auto",
         description="分块策略: auto/recursive/structure/sentence/dialogue/small_big/parent_child"
     )
-    embedding_model: str = Field("text-embedding-v1", description="嵌入模型")
+    # 更灵活的 embedding 配置
+    embedding_provider: str = Field("siliconflow", description="Embedding 提供商")
+    embedding_model: str = Field("BAAI/bge-m3", description="Embedding 模型")
+    embedding_api_key: Optional[str] = Field(None, description="Embedding API 密钥")
+    embedding_base_url: Optional[str] = Field(None, description="Embedding API 基础 URL")
 
 
 class RAGTriggerConfig(BaseModel):

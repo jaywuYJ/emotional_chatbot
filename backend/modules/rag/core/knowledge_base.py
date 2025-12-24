@@ -17,6 +17,7 @@ from .langchain_compat import (
 )
 
 from .chunking_selector import ChunkingStrategySelector
+from .embedding_providers import get_embedding_instance
 
 from backend.logging_config import get_logger
 from config import Config
@@ -32,7 +33,11 @@ class KnowledgeBaseManager:
         persist_directory: str = "./chroma_db/psychology_kb",
         chunking_strategy: str = "auto",
         chunk_size: int = 500,
-        chunk_overlap: int = 50
+        chunk_overlap: int = 50,
+        embedding_provider: str = None,
+        embedding_model: str = None,
+        embedding_api_key: str = None,
+        embedding_base_url: str = None
     ):
         """
         初始化知识库管理器
@@ -42,11 +47,30 @@ class KnowledgeBaseManager:
             chunking_strategy: 分块策略（auto/recursive/structure/sentence/small_big/parent_child）
             chunk_size: 块大小（字符数）
             chunk_overlap: 块重叠（字符数）
+            embedding_provider: Embedding 提供商
+            embedding_model: Embedding 模型
+            embedding_api_key: Embedding API 密钥
+            embedding_base_url: Embedding API 基础 URL
         """
         self.persist_directory = persist_directory
-        # 暂时禁用嵌入功能，使用简单的文本匹配
-        self.embeddings = None
-        logger.info("暂时禁用嵌入功能，使用简单文本匹配")
+        
+        # 初始化 embedding
+        try:
+            self.embeddings = get_embedding_instance(
+                provider=embedding_provider,
+                model=embedding_model,
+                api_key=embedding_api_key,
+                base_url=embedding_base_url
+            )
+            if self.embeddings:
+                logger.info(f"成功初始化 embedding: provider={embedding_provider or Config.EMBEDDING_PROVIDER}, model={embedding_model or Config.EMBEDDING_MODEL}")
+            else:
+                logger.warning("Embedding 初始化失败，将使用简单文本匹配模式")
+        except Exception as e:
+            logger.error(f"Embedding 初始化异常: {e}")
+            self.embeddings = None
+            logger.warning("回退到简单文本匹配模式")
+        
         self.vectorstore: Optional[Chroma] = None
         
         # 确保目录存在
@@ -71,6 +95,7 @@ class KnowledgeBaseManager:
         )
         
         logger.info(f"知识库管理器初始化完成，持久化目录: {persist_directory}, 分块策略: {chunking_strategy}")
+        logger.info(f"Embedding 状态: {'启用' if self.embeddings else '禁用（文本匹配模式）'}")
     
     def load_pdf_documents(self, pdf_path: str) -> List[Document]:
         """
@@ -398,14 +423,17 @@ class KnowledgeBaseManager:
                     "status": "就绪",
                     "document_count": len(self.text_storage),
                     "persist_directory": self.persist_directory,
-                    "embedding_model": "文本存储模式"
+                    "embedding_model": "文本存储模式",
+                    "embedding_provider": "none"
                 }
             
             # 检查向量存储模式
             if self.vectorstore is None:
                 return {
                     "status": "未初始化",
-                    "document_count": 0
+                    "document_count": 0,
+                    "embedding_provider": Config.EMBEDDING_PROVIDER,
+                    "embedding_model": Config.EMBEDDING_MODEL
                 }
             
             # 获取集合信息
@@ -416,13 +444,16 @@ class KnowledgeBaseManager:
                 "status": "就绪",
                 "document_count": count,
                 "persist_directory": self.persist_directory,
-                "embedding_model": "OpenAI Ada-002"
+                "embedding_provider": Config.EMBEDDING_PROVIDER,
+                "embedding_model": Config.EMBEDDING_MODEL
             }
         except Exception as e:
             logger.error(f"获取统计信息失败: {e}")
             return {
                 "status": "错误",
-                "error": str(e)
+                "error": str(e),
+                "embedding_provider": Config.EMBEDDING_PROVIDER,
+                "embedding_model": Config.EMBEDDING_MODEL
             }
 
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenAI兼容的LLM提供商
-支持OpenAI API和其他兼容的服务（如通义千问、DeepSeek等）
+阿里云通义千问DashScope提供商
 """
 
 import requests
@@ -9,18 +8,18 @@ import json
 from typing import Dict, List, Any, Optional
 from .base_provider import BaseLLMProvider, LLMMessage, LLMResponse
 
-class OpenAIProvider(BaseLLMProvider):
-    """OpenAI兼容的LLM提供商"""
+class DashScopeProvider(BaseLLMProvider):
+    """阿里云通义千问DashScope提供商"""
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self.api_key = config.get('api_key')
-        self.base_url = config.get('base_url', 'https://api.openai.com/v1')
-        self.model = config.get('model', 'gpt-3.5-turbo')
+        self.base_url = config.get('base_url', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+        self.model = config.get('model', 'qwen-plus')
         self.timeout = config.get('timeout', 30)
         
         if not self.api_key:
-            raise ValueError("OpenAI API密钥未配置")
+            raise ValueError("DashScope API密钥未配置")
     
     async def chat_completion(
         self, 
@@ -28,7 +27,7 @@ class OpenAIProvider(BaseLLMProvider):
         **kwargs
     ) -> LLMResponse:
         """
-        调用OpenAI兼容的聊天完成API
+        调用DashScope聊天完成API
         """
         try:
             headers = {
@@ -46,20 +45,14 @@ class OpenAIProvider(BaseLLMProvider):
                 "max_tokens": kwargs.get('max_tokens', self.max_tokens)
             }
             
-            # 支持函数调用
-            functions = kwargs.get('functions')
-            if functions:
-                data['functions'] = functions
-                data['function_call'] = kwargs.get('function_call', 'auto')
-            
-            # 支持工具调用（新格式）
+            # 支持工具调用
             tools = kwargs.get('tools')
             if tools:
                 data['tools'] = tools
                 data['tool_choice'] = kwargs.get('tool_choice', 'auto')
             
-            print(f"[OPENAI] 调用模型: {self.model}")
-            print(f"[OPENAI] 消息数量: {len(api_messages)}")
+            print(f"[DASHSCOPE] 调用模型: {self.model}")
+            print(f"[DASHSCOPE] 消息数量: {len(api_messages)}")
             
             # 发送请求
             response = requests.post(
@@ -70,7 +63,7 @@ class OpenAIProvider(BaseLLMProvider):
             )
             
             if response.status_code != 200:
-                raise Exception(f"OpenAI API错误: {response.status_code} - {response.text}")
+                raise Exception(f"DashScope API错误: {response.status_code} - {response.text}")
             
             result = response.json()
             choice = result['choices'][0]
@@ -84,23 +77,34 @@ class OpenAIProvider(BaseLLMProvider):
             )
             
         except requests.exceptions.RequestException as e:
-            print(f"[OPENAI] 网络请求失败: {e}")
-            raise Exception(f"OpenAI API连接失败: {e}")
+            print(f"[DASHSCOPE] 网络请求失败: {e}")
+            raise Exception(f"DashScope API连接失败: {e}")
         except Exception as e:
-            print(f"[OPENAI] 调用失败: {e}")
+            print(f"[DASHSCOPE] 调用失败: {e}")
             raise
     
     def is_available(self) -> bool:
-        """检查OpenAI API是否可用"""
+        """检查DashScope API是否可用"""
         try:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"
             }
-            response = requests.get(f"{self.base_url}/models", headers=headers, timeout=5)
+            # DashScope没有models端点，直接测试聊天接口
+            test_data = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": "test"}],
+                "max_tokens": 1
+            }
+            response = requests.post(
+                f"{self.base_url}/chat/completions", 
+                headers=headers, 
+                json=test_data, 
+                timeout=5
+            )
             return response.status_code == 200
         except:
             return False
     
     def get_provider_name(self) -> str:
-        return "OpenAI"
+        return "DashScope"
